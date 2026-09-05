@@ -20,6 +20,11 @@ if ($LASTEXITCODE) { throw 'Błąd kompilacji pixel shadera.' }
 if ($LASTEXITCODE) { throw 'Błąd kompilacji silnika.' }
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $sources = (Get-ChildItem -LiteralPath "$root\src" -Filter '*.cs').FullName
-& $csc /nologo /target:winexe "/win32icon:$root\assets\Softlight.ico" /platform:x64 /optimize+ /utf8output "/win32manifest:$root\src\app.manifest" "/out:$root\Softlight.exe" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll $sources
+& $csc /nologo /target:winexe "/win32icon:$root\assets\Softlight.ico" /platform:x64 /optimize+ /utf8output "/win32manifest:$root\src\app.manifest" "/out:$root\Softlight.exe" /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll $sources
 if ($LASTEXITCODE) { throw 'Błąd kompilacji interfejsu.' }
 Write-Output "Gotowe: $root\Softlight.exe"
+
+if (!(Test-Path "$root\Softlight.FirefoxHost.exe") -or (Get-Item "$root\bridge\Host.cs").LastWriteTimeUtc -gt (Get-Item "$root\Softlight.FirefoxHost.exe").LastWriteTimeUtc) {
+& $csc /nologo /target:exe /platform:x64 /optimize+ "/out:$root\Softlight.FirefoxHost.exe" /r:System.dll /r:System.Core.dll "$root\bridge\Host.cs"
+if ($LASTEXITCODE) { throw "Firefox host compilation failed" }
+}

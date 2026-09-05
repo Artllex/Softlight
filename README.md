@@ -13,10 +13,16 @@ Get the installer or portable ZIP from [Releases](https://github.com/Artllex/Sof
 - **Installer:** installs for the current user without administrator rights, adds a Start menu shortcut and an uninstaller.
 - **Portable:** extract the entire ZIP and run `Softlight.exe`. Keep the DLL and assets folder alongside it.
 
-Windows 10 version 2004 or newer, or Windows 11, x64. Uses .NET Framework 4.8 and Direct3D 11. This preview is not code-signed; Windows may display a reputation warning.
+Windows 10 version 2004 or newer, or Windows 11, x64. Uses .NET Framework 4.8 and Direct3D 11. The application is not code-signed; Windows may display a reputation warning.
+
+## Firefox integration (2.1.0)
+
+The installer and portable package include the Firefox extension and native host. Follow [Firefox setup](FIREFOX.md) to load the unsigned extension temporarily. It must be loaded again after restarting Firefox.
 
 ## Features
 
+- Independent Firefox Player/Page dimming with immediate response to large video cuts in either direction and slow smoothing of smaller changes.
+- Collapsible Brightness/Dim graph with ten-second history and Freeze.
 - Automatic whole-window dimming for SDR and HDR desktops.
 - Strength, response speed and sudden-change response controls.
 - Remembers settings between launches; defaults are 70%, 2× and 30%.
@@ -40,7 +46,7 @@ Settings live in `%LOCALAPPDATA%\NocnyFiltrWindows\settings.ini`, retaining comp
 
 Softlight samples the desktop through DXGI Desktop Duplication, identifies visible application windows and draws click-through black overlays using DirectComposition. It does not change the monitor's hardware brightness. The overlay is excluded from capture to avoid recursive dimming. HDR composition uses linear scRGB.
 
-A browser is treated as one window, not separate tabs or video regions. Only visible areas contribute to brightness analysis. The first bright frame can appear before capture and dimming; flash prevention is not guaranteed. Moving windows can briefly expose a delayed mask. Protected video, exclusive fullscreen games and multiple physical displays have not been comprehensively validated. Transparent and irregular windows are approximated by rectangles.
+With the [Firefox companion extension](FIREFOX.md), the largest visible player is dimmed independently from the rest of the browser window. Without it, browsers are treated as whole windows. Only visible areas contribute to brightness analysis. The first bright frame can appear before capture and dimming; flash prevention is not guaranteed. Moving windows can briefly expose a delayed mask. Protected video, exclusive fullscreen games and multiple physical displays have not been comprehensively validated. Transparent and irregular windows are approximated by rectangles.
 
 The selected analysis frequency is a target, not a guaranteed refresh rate. Emergency brightness detection checks fresh captured frames even at lower selected rates. All processing stays on the device; the app does not upload screen content or window titles.
 

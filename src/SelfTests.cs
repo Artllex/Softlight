@@ -8,6 +8,34 @@ using System.Windows.Forms;
 
 namespace NocnyFiltr {
     internal static class SelfTests {
+        internal static int FirefoxCheck(string path) {
+            var report=new List<string>();
+            try {
+                Native.NfStart();Native.NfConfigure(0,.70f,0,120);Native.NfTiming(30,75,30);Native.NfEnable(1);
+                using(var bridge=new PlayerBridge()) {
+                    DateTime end=DateTime.UtcNow.AddSeconds(55);string latest="";
+                    while(DateTime.UtcNow<end) {
+                        WaitUi(200);var text=new StringBuilder(4096);Native.NfWindowReport(text,text.Capacity);latest=text.ToString();
+                        if(latest.Contains("Firefox video")) {
+                            WaitUi(2500);text.Clear();Native.NfWindowReport(text,text.Capacity);
+                            latest=text.ToString();if(!latest.Contains("Firefox video"))continue;
+                            string video=Array.Find(latest.Split('\n'),line=>line.Contains("Firefox video"));
+                            int alpha=int.Parse(video.Substring(0,video.IndexOf('%')));
+                            Require(alpha>20,"Video not dimmed independently: "+video);
+                            string page=Array.Find(latest.Split('\n'),line=>line.Contains("Softlight player test"));
+                            Require(page!=null,"Test browser missing");
+                            int pageAlpha=int.Parse(page.Substring(0,page.IndexOf('%')));
+                            Require(pageAlpha<10,"Dark page still affected by bright video: "+page);
+                            report.Add("PASS: Firefox extension -> native messaging -> user-only pipe -> native regions.");
+                            report.Add("PASS: video dimming="+alpha+"%, dark page="+pageAlpha+"%.");
+                            File.WriteAllLines(path,report);return 0;
+                        }
+                    }
+                    throw new Exception("No video region received. Bridge: "+PlayerBridge.LastMessage+" Latest report: "+latest);
+                }
+            }catch(Exception e){report.Add("FAIL: "+e);File.WriteAllLines(path,report);return 1;}
+            finally{Native.NfEnable(0);Native.NfStop();}
+        }
         static void Require(bool value, string message) { if (!value) throw new Exception(message); }
         internal static int WindowSmoke(string path) {
             List<string> report=new List<string>();

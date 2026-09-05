@@ -2,7 +2,12 @@
 // Up to 30 or 60 Hz. One alpha per HWND preserves internal tonal relationships.
 static std::mutex reportMutex;
 static std::wstring windowReport;
-struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; };
+struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; int part=0; };
+static std::mutex playerMutex;
+static HWND playerWindow=nullptr;
+static RECT playerRect{},playerWindowRect{};
+static ULONGLONG playerSeen=0;
+static unsigned playerGeneration=0;
 struct WindowGain { float current=0, target=0, mean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0; bool hadSample=false; };
 static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual) {
     bool flash=mean>g.mean+.12f && mean>g.mean*1.6f && desired>g.current+.08f;
@@ -22,6 +27,18 @@ static float AdvanceWindowGain(float current,float target,float dt,float speed=5
     float blend=1-std::exp(-dt*general*adaptive/(target>current?.18f:.30f));
     return current+(target-current)*blend;
 }
+// Video: a +/-10 pp fluctuation can span 20 pp between two observations.
+// Larger cuts in either direction immediately apply the corresponding dimming.
+static void ObserveVideoGain(WindowGain& g,float mean,float desired,bool manual) {
+    bool cut=g.hadSample && std::abs(mean-g.mean)>.22f;
+    g.target=desired;
+    if(manual || cut || (!g.hadSample && desired>g.current)) g.current=desired;
+    g.mean=mean;g.hadSample=true;
+}
+static float AdvanceVideoGain(float current,float target,float dt,float speed=50) {
+    float seconds=std::clamp(5.0f/std::pow(4.0f,(speed-50)/50),1.5f,12.0f);
+    return current+(target-current)*(1-std::exp(-dt/seconds));
+}
 static float WindowTarget(float mean, float reference, float strength) {
     // Automatic region selection, never a per-pixel threshold or curve.
     float excess=std::max(0.0f,mean-reference);
@@ -32,7 +49,8 @@ static float WindowTarget(float mean, float reference, float strength) {
 }
 struct WindowAnalyzer {
     std::vector<WindowRegion> windows;
-    std::map<HWND,WindowGain> states;
+    std::map<std::pair<HWND,int>,WindowGain> states;
+    unsigned seenPlayerGeneration=0;
     RECT desktop{};
     double sampleTime=0; ULONGLONG tickTime=0;
     float previousStrength=-1;
@@ -60,10 +78,30 @@ struct WindowAnalyzer {
     void Update(Pipeline& gpu, ID3D11ShaderResourceView* source, UINT width, UINT height, RECT bounds, Settings& s,bool frameChanged) {
         desktop=bounds; windows.clear(); EnumWindows(Enumerate,reinterpret_cast<LPARAM>(this));
         ULONGLONG now=GetTickCount64();
+        {
+            std::lock_guard<std::mutex> lock(playerMutex);
+            if(seenPlayerGeneration!=playerGeneration) {
+                for(auto it=states.begin();it!=states.end();) {if(it->first.second)it=states.erase(it);else ++it;}
+                seenPlayerGeneration=playerGeneration;
+            }
+            RECT current{};
+            if(playerWindow && now-playerSeen<500 &&
+                GetWindowRect(playerWindow,&current) && EqualRect(&current,&playerWindowRect)) {
+                for(size_t i=0;i<windows.size() && windows.size()<64;i++) if(windows[i].handle==playerWindow && windows[i].eligible) {
+                    RECT clipped{};
+                    if(IntersectRect(&clipped,&windows[i].rect,&playerRect)) {
+                        WindowRegion video{playerWindow,clipped,true,L"Firefox video",1};
+                        windows[i].title=L"Firefox page: "+windows[i].title;
+                        windows.insert(windows.begin()+i,video);
+                    }
+                    break;
+                }
+            }
+        }
         float dt=tickTime?std::min(.25f,float(now-tickTime)/1000):0;tickTime=now;
         for(auto& w:windows) {
             DWORD pid=0;GetWindowThreadProcessId(w.handle,&pid);
-            auto& g=states[w.handle];
+            auto& g=states[{w.handle,w.part}];
             if(g.process && g.process!=pid) g=WindowGain{};
             if(g.lastSeen && now-g.lastSeen>250) g.holdUntil=now+250;
             g.lastSeen=now;g.process=pid;
@@ -104,13 +142,17 @@ struct WindowAnalyzer {
             // for a single maximized bright window. No user threshold needed.
             float reference=std::clamp(pixels?float(scene/pixels)*.8f:.18f,.12f,.28f);
             for(size_t i=0;i<windows.size();i++) {
-                auto& g=states[windows[i].handle];
+                auto& g=states[{windows[i].handle,windows[i].part}];
                 if(!windows[i].eligible) {g.target=g.current=0;continue;}
                 if(!g.measurable && counts[i]>=8 && g.hadSample) g.holdUntil=now+200;
                 g.measurable=counts[i]>=8;
-                if(g.measurable && now>=g.holdUntil) {
+                if(g.measurable && (windows[i].part || now>=g.holdUntil)) {
                     float mean=float(totals[i]/counts[i]);
-                    ObserveWindowGain(g,mean,WindowTarget(mean,reference,s.strength),sampleReady,manual);g.hadSample=true;
+                    bool browserPart=windows[i].part || windows[i].title.find(L"Firefox page: ")==0;
+                    float desired=WindowTarget(mean,browserPart?.18f:reference,s.strength);
+                    if(windows[i].part) ObserveVideoGain(g,mean,desired,manual);
+                    else ObserveWindowGain(g,mean,desired,sampleReady,manual);
+                    g.hadSample=true;
                 }
                 else g.target=g.current; // No visible samples is not a dark frame.
             }
@@ -119,19 +161,23 @@ struct WindowAnalyzer {
         s.mode=1;s.regionCount=float(windows.size());
         std::wstring report;
         for(size_t i=0;i<windows.size();i++) {
-            auto& w=windows[i];auto& g=states[w.handle];
+            auto& w=windows[i];auto& g=states[{w.handle,w.part}];
             if(s.strength<=0) g.target=g.current=0;
-            if(g.measurable) g.current=AdvanceWindowGain(g.current,g.target,dt,float(changeSpeed.load()),float(suddenSpeed.load()));
+            if(g.measurable) g.current=w.part?AdvanceVideoGain(g.current,g.target,dt,float(changeSpeed.load())):
+                AdvanceWindowGain(g.current,g.target,dt,float(changeSpeed.load()),float(suddenSpeed.load()));
             if(std::abs(g.current-g.target)<.0005f) g.current=g.target;
             s.regions[i][0]=float(w.rect.left-bounds.left);s.regions[i][1]=float(w.rect.top-bounds.top);
             s.regions[i][2]=float(w.rect.right-bounds.left);s.regions[i][3]=float(w.rect.bottom-bounds.top);
             s.gains[i][0]=g.current;
             if(w.eligible && report.size()<2500) {
-                report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title+L"\r\n";
+                report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title;
+                if(w.part || w.title.find(L"Firefox page: ")==0)
+                    report+=L"\t"+(g.hadSample?std::to_wstring(int(std::round(g.mean*100))):L"?");
+                report+=L"\r\n";
             }
         }
         // Keep hidden/minimized/off-screen windows until their HWND is destroyed.
-        for(auto i=states.begin();i!=states.end();) {if(!IsWindow(i->first))i=states.erase(i);else ++i;}
+        for(auto i=states.begin();i!=states.end();) {if(!IsWindow(i->first.first))i=states.erase(i);else ++i;}
         {std::lock_guard<std::mutex> lock(reportMutex);windowReport=report;}
     }
 };

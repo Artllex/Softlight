@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Softlight Firefox Preview",
+  "version": "0.1.1",
+  "description": "Shares visible video geometry with the local Softlight app for independent video dimming.",
+  "browser_specific_settings": {"gecko": {"id": "firefox@softlight.artllex", "strict_min_version": "142.0", "data_collection_permissions": {"required": ["none"]}}},
+  "permissions": ["nativeMessaging", "tabs", "http://*/*", "https://*/*"],
+  "background": {"scripts": ["background.js"]},
+  "browser_action": {"default_title": "Softlight: connect to desktop app"},
+  "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle", "all_frames": false}]
+}

@@ -488,7 +488,32 @@ API int __cdecl NfTestHdrShader(float t, float s, int curve, float white, int co
 }
 
 API void __cdecl NfWindowReport(wchar_t* buffer, int length) { if(!buffer || length<1) return; std::lock_guard<std::mutex> lock(reportMutex); wcsncpy_s(buffer,length,windowReport.c_str(),_TRUNCATE); }
+API void __cdecl NfPlayer(HWND window,int left,int top,int right,int bottom,int generation) {
+    std::lock_guard<std::mutex> lock(playerMutex);
+    if(window!=playerWindow || unsigned(generation)!=playerGeneration) playerGeneration=unsigned(generation);
+    playerWindow=window;playerRect={left,top,right,bottom};playerSeen=GetTickCount64();
+    if(window) GetWindowRect(window,&playerWindowRect);
+}
 API int __cdecl NfTestResponse() {
+    WindowGain video;ObserveVideoGain(video,.02f,0,false);
+    ObserveVideoGain(video,.9f,.85f,false);
+    if(video.current!=.85f) return 30;
+    ObserveVideoGain(video,.05f,0,false);
+    if(video.current!=0 || video.target!=0) return 31;
+    video.mean=.4f;video.current=.5f;
+    for(int i=0;i<240;i++) {
+        float before=video.current;
+        ObserveVideoGain(video,i%2?.5f:.3f,i%2?.7f:.3f,false);
+        if(video.current!=before) return 32;
+        video.current=AdvanceVideoGain(video.current,video.target,1.f/120,75);
+        if(std::abs(video.current-before)>.002f) return 33;
+    }
+    for(int fps : {30,60,120}) {
+        float value=.8f;
+        for(int i=0;i<fps;i++) value=AdvanceVideoGain(value,0,1.f/fps,75);
+        if(std::abs(value-.8f*std::exp(-1.f/2.5f))>.00001f) return 34;
+    }
+    ObserveVideoGain(video,.5f,.1f,true);if(video.current!=.1f) return 35;
     WindowGain stable;stable.current=stable.target=.5f;stable.mean=.4f;
     for(int i=0;i<20000;i++) ObserveWindowGain(stable,.4f,.5f+(i%2?.02f:-.02f),true,false);
     if(stable.target!=.5f || stable.current!=.5f) return 20;

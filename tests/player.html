@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Softlight player test</title>
+<style>body{margin:0;background:#101010;color:#888;font:18px sans-serif}video{display:block;width:640px;height:360px;margin:80px 40px}p{margin:40px}</style>
+<p>Softlight player test: bright video on a dark page.</p><video muted autoplay playsinline></video>
+<script>
+const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;
+const ctx=canvas.getContext('2d');let frame=0;
+function paint(){ctx.fillStyle='white';ctx.fillRect(0,0,640,360);ctx.fillStyle='#404040';ctx.fillRect(0,280,640,80);ctx.fillStyle='#ddd';ctx.fillRect((frame++*3)%600,20,20,20);requestAnimationFrame(paint)}
+paint();document.querySelector('video').srcObject=canvas.captureStream(30);
+</script>
+<script>if(!sessionStorage.reloaded){sessionStorage.reloaded=1;setTimeout(()=>location.reload(),8000)}</script>

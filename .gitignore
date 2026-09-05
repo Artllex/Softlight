@@ -8,3 +8,6 @@ build/
 dist/
 test-results/
 *.tmp
+
+bridge/softlight_firefox.json
+web-ext-artifacts/

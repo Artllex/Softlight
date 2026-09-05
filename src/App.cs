@@ -18,6 +18,7 @@ namespace NocnyFiltr {
             try { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            if (args.Length > 0 && args[0] == "--firefox-check") return SelfTests.FirefoxCheck(args[1]);
             if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : "self-test.txt");
             if (args.Length > 0 && args[0] == "--interface-check") return SelfTests.InterfaceCheck(args[1]);
             if (args.Length > 0 && args[0] == "--render-menu") {
@@ -26,6 +27,7 @@ namespace NocnyFiltr {
             if (args.Length > 0 && args[0] == "--render-ui") {
                 using (MainForm f = new MainForm(true)) {
                     f.Show(); Application.DoEvents();
+                    if(Array.IndexOf(args,"--graph")>=0) {f.ToggleGraph();Application.DoEvents();}
                     using (Bitmap b = new Bitmap(f.Width, f.Height)) { f.DrawToBitmap(b, new Rectangle(Point.Empty, f.Size)); b.Save(args[1], ImageFormat.Png); }
                 }
                 return 0;
@@ -177,8 +179,14 @@ namespace NocnyFiltr {
         internal bool StartHidden;
         NotifyIcon tray;
         Icon moonIcon;
+        PlayerBridge playerBridge;
         Slider strength;
         WindowList windowList;
+        LiveGraph liveGraph;
+        Panel graphPanel;
+        DarkButton graphToggle;
+        bool graphExpanded;
+        System.Windows.Forms.Timer graphTimer;
         Label strengthValue, statusLabel, hotkeyLabel;
         DarkButton toggle; Slider speedSlider,suddenSlider; Label speedValue,suddenValue; ToolStripMenuItem frequencyMenu, eco;
 
@@ -211,6 +219,22 @@ namespace NocnyFiltr {
             foreach (Control control in Controls) if (control.Top > windowsPanel.Top) control.Top += 30;
             ClientSize = new Size(ClientSize.Width, ClientSize.Height + 30);
             layoutScale = dpiScale;
+            graphToggle=ButtonAt(this,"▸ Live graph",12,34,336,24,delegate {ToggleGraph();});
+            graphToggle.SetBounds((int)(12*dpiScale),(int)(34*dpiScale),(int)(336*dpiScale),(int)(24*dpiScale));
+            foreach(Control control in Controls) if(control!=graphToggle && control.Top>32*dpiScale)control.Top+=(int)(30*dpiScale);
+            graphPanel=new RoundedPanel {BackColor=Theme.Card,Visible=false};
+            graphPanel.SetBounds((int)(12*dpiScale),(int)(62*dpiScale),(int)(336*dpiScale),(int)(174*dpiScale));Controls.Add(graphPanel);
+            liveGraph=new LiveGraph();liveGraph.SetBounds(0,(int)(28*dpiScale),graphPanel.Width,(int)(142*dpiScale));graphPanel.Controls.Add(liveGraph);
+            var target=new DarkButton {Text="Player",Font=Theme.Font(8,FontStyle.Regular)};
+            target.SetBounds((int)(8*dpiScale),(int)(3*dpiScale),(int)(85*dpiScale),(int)(24*dpiScale));
+            target.Click+=delegate {liveGraph.Page=!liveGraph.Page;target.Text=liveGraph.Page?"Page":"Player";liveGraph.Clear();};graphPanel.Controls.Add(target);
+            var freeze=new CheckBox {Text="Freeze",ForeColor=Theme.Muted,Font=Theme.Font(8,FontStyle.Regular)};freeze.SetBounds((int)(106*dpiScale),(int)(3*dpiScale),(int)(72*dpiScale),(int)(24*dpiScale));
+            freeze.CheckedChanged+=delegate {liveGraph.Frozen=freeze.Checked;};graphPanel.Controls.Add(freeze);
+            var legend=new Label {Text="Brightness",ForeColor=Color.FromArgb(242,200,110),Font=Theme.Font(7,FontStyle.Regular)};legend.SetBounds((int)(192*dpiScale),(int)(7*dpiScale),(int)(82*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(legend);
+            var dimLegend=new Label {Text="Dim",ForeColor=Theme.Accent,Font=Theme.Font(7,FontStyle.Regular)};dimLegend.SetBounds((int)(282*dpiScale),(int)(7*dpiScale),(int)(45*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(dimLegend);dimLegend.BringToFront();
+            graphTimer=new System.Windows.Forms.Timer {Interval=33};
+            graphTimer.Tick+=delegate {if(!previewOnly && Visible && graphExpanded && !liveGraph.Frozen) {var data=new System.Text.StringBuilder(4096);Native.NfWindowReport(data,data.Capacity);liveGraph.Observe(data.ToString(),settings.Enabled && settings.Strength>0 && !suspended);}};
+            graphTimer.Start();
             ResumeLayout(false);
             VisibleChanged += delegate { UpdatePreviewRect(); };
             LocationChanged += delegate { UpdatePreviewRect(); };
@@ -222,6 +246,7 @@ namespace NocnyFiltr {
                 if (Environment.OSVersion.Version.Build < 19041) throw new NotSupportedException("Windows 10 2004 or Windows 11 is required.");
                 if (Native.NfStart() == 0) throw new InvalidOperationException("Could not start the display engine.");
                 BuildTray();
+                playerBridge = new PlayerBridge();
                 saveTimer = new System.Windows.Forms.Timer { Interval = 500 };
                 saveTimer.Tick += delegate { saveTimer.Stop(); Save(); };
                 poll = new System.Windows.Forms.Timer { Interval = 500 }; poll.Tick += delegate { Poll(); }; poll.Start();
@@ -371,13 +396,27 @@ namespace NocnyFiltr {
             }
             Poll();
         }
+        string FormatWindowReport(string raw) {
+            var firefox=new System.Text.StringBuilder();
+            var others=new System.Text.StringBuilder();
+            foreach(string line in raw.Split(new[]{"\r\n","\n"},StringSplitOptions.RemoveEmptyEntries)) {
+                int tab=line.LastIndexOf('\t');
+                if(tab>=0 && (line.Contains("Firefox video") || line.Contains("Firefox page:"))) {
+                    int percent=line.IndexOf('%');
+                    string label=line.Contains("Firefox video")?"Player":"Page";
+                    firefox.Append(label+" · Brightness "+line.Substring(tab+1)+"% · Dim "+line.Substring(0,percent)+"%\r\n");
+                } else others.Append(line+"\r\n");
+            }
+            return firefox.ToString()+others;
+        }
         void Poll() {
             UpdatePreviewRect();
             if (!settings.Enabled || settings.Strength == 0) { windowList.Text=""; statusLabel.Text = T("Wstrzymany · oryginalny obraz"); toggle.Selected=false; toggle.Text=settings.Enabled ? T("Siła wynosi 0%") : T("○  Włącz filtr"); toggle.Invalidate(); if (tray != null) tray.Text = T("Nocny Filtr — wstrzymany"); return; }
             if (suspended) { statusLabel.Text = T("Wstrzymany · zablokowana sesja"); return; }
             if (previewOnly) { statusLabel.Text = T("Podgląd ustawień"); return; }
             System.Text.StringBuilder report=new System.Text.StringBuilder(4096);Native.NfWindowReport(report,report.Capacity);
-            if(windowList.Text!=report.ToString()) windowList.Text=report.ToString();
+            string display=FormatWindowReport(report.ToString());
+            if(windowList.Text!=display) windowList.Text=display;
             EngineStatus status; Native.NfGetStatus(out status);
             if (status.Heartbeat != 0 && Native.GetTickCount64() - status.Heartbeat > 2500) {
                 Pause(); statusLabel.Text = T("Filtr wyłączony: silnik nie odpowiada."); return;
@@ -393,11 +432,17 @@ namespace NocnyFiltr {
         void Save() { try { settings.Save(); } catch (Exception ex) { statusLabel.Text = T("Nie zapisano ustawień: ") + ex.Message; } }
         void UpdatePreviewRect() { if(!previewOnly && ready) Native.NfPreviewRect(0,0,0,0); }
         internal void Pause() { settings.Enabled = false; Apply(true); }
+        internal void ToggleGraph() {
+            graphExpanded=!graphExpanded;int shift=(int)(180*layoutScale)*(graphExpanded?1:-1);
+            foreach(Control control in Controls) if(control!=graphPanel && control!=graphToggle && control.Top>graphToggle.Bottom)control.Top+=shift;
+            graphPanel.Visible=graphExpanded;graphToggle.Text=graphExpanded?"▾ Live graph":"▸ Live graph";
+            liveGraph.Clear();AnchorPanel();
+        }
         void AnchorPanel() {
             Rectangle area = Screen.PrimaryScreen.WorkingArea;
             int margin = Math.Max(4, (int)Math.Round(6 * layoutScale));
             int desiredWidth = (int)Math.Round(360 * layoutScale);
-            int desiredHeight = (int)Math.Round(438 * layoutScale) + 30;
+            int desiredHeight = (int)Math.Round((468+(graphExpanded?180:0)) * layoutScale) + 30;
             AutoScroll = desiredHeight > area.Height - margin*2 || desiredWidth > area.Width - margin*2;
             Size = new Size(Math.Min(desiredWidth, area.Width-margin*2), Math.Min(desiredHeight, area.Height-margin*2));
             Location = new Point(area.Right - Width - margin, area.Bottom - Height - margin);
@@ -453,6 +498,8 @@ namespace NocnyFiltr {
                     SystemEvents.SessionSwitch -= OnSessionSwitch; SystemEvents.DisplaySettingsChanged -= OnDisplayChanged; SystemEvents.PowerModeChanged -= OnPowerChanged;
                 }
                 if (hotkeyRegistered && IsHandleCreated) Native.UnregisterHotKey(Handle, 1);
+                if (playerBridge != null) playerBridge.Dispose();
+                if (graphTimer != null) graphTimer.Dispose();
                 if (poll != null) poll.Dispose(); if (saveTimer != null) saveTimer.Dispose();
                 if (tray != null) { tray.Visible = false; tray.Dispose(); } if (moonIcon != null) moonIcon.Dispose();
             }
