@@ -8,6 +8,7 @@ static HWND playerWindow=nullptr;
 static RECT playerRect{},playerWindowRect{};
 static ULONGLONG playerSeen=0;
 static unsigned playerGeneration=0;
+static std::map<HWND,int> browserContexts;
 struct WindowGain { float current=0, target=0, mean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0,cutUntil=0; bool hadSample=false; std::vector<std::pair<ULONGLONG,float>> recent; };
 static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual) {
     bool flash=mean>g.mean+.12f && mean>g.mean*1.6f && desired>g.current+.08f;
@@ -183,6 +184,11 @@ struct WindowAnalyzer {
                 report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title;
                 report+=L"\t"+(g.hadSample && g.measurable?std::to_wstring(int(std::round(g.mean*100))):L"?");
                 report+=L"\t"+std::to_wstring(reinterpret_cast<uintptr_t>(w.handle))+L":"+std::to_wstring(w.part);
+                if(w.browser || w.part) {
+                    std::lock_guard<std::mutex> lock(playerMutex);
+                    auto context=browserContexts.find(w.handle);
+                    report+=L":"+std::to_wstring(context!=browserContexts.end()?context->second:0);
+                }
                 if(int(i)==selected) report+=L"\tactive";
                 report+=L"\r\n";
             }

@@ -10,6 +10,7 @@ using System.Web.Script.Serialization;
 
 namespace NocnyFiltr {
     internal sealed class PlayerBridge : IDisposable {
+        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] static extern void NfBrowserContext(IntPtr window,int generation);
         [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern void NfPlayer(IntPtr window,int left,int top,int right,int bottom,int generation);
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr window,StringBuilder text,int count);
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,StringBuilder text,int count);
@@ -40,7 +41,8 @@ namespace NocnyFiltr {
                         LastMessage=m==null?"empty":("visible="+m.visible+" rect="+m.left+","+m.top+","+m.right+","+m.bottom);
                         IntPtr window=Native.GetForegroundWindow();var cls=new StringBuilder(128);GetClassName(window,cls,cls.Capacity);
                         var caption=new StringBuilder(1024);GetWindowText(window,caption,caption.Capacity);
-                        if(m!=null && m.visible) {
+                        if(m!=null && m.visible && string.IsNullOrEmpty(m.title))continue;
+                        if(m!=null && !string.IsNullOrEmpty(m.title)) {
                             if(string.IsNullOrEmpty(m.title))continue;
                             IntPtr match=IntPtr.Zero;int matches=0;
                             var cachedTitle=new StringBuilder(1024);
@@ -59,6 +61,7 @@ namespace NocnyFiltr {
                             },IntPtr.Zero);
                             if(matches!=1)continue;
                             cachedWindow=window=match;GetClassName(window,cls,cls.Capacity);
+                            NfBrowserContext(window,m.generation);
                         }
                         Bounds b;
                         if(m!=null && m.visible && cls.ToString()=="MozillaWindowClass" && GetWindowRect(window,out b) &&

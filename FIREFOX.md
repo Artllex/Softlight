@@ -17,7 +17,7 @@ The largest visible HTML video/player is measured separately from the rest of it
 
 Video cuts above 22 brightness percentage points in either direction immediately apply target dimming on detection. Detection also considers the last 120 ms, capturing cuts spread across multiple frames; a short 150 ms follow-through tracks the end of the transition. Fluctuations within +/-10 pp are smoothed slowly. Speed scales that response (2.5-second time constant at 2x); Sudden change controls ordinary windows only. Manual strength changes apply immediately to video. Capture and presentation latency still apply.
 
-Expand **Live graph** for ten seconds of Brightness (yellow, pre-filter average) and Dim (mint). It samples approximately 30 Hz while visible. Auto follows the active application, selecting its detected player when available or the whole window otherwise. Clicking the Softlight panel retains the last observed application. Use Freeze to inspect transitions. Missing measurements create gaps. These are relative image measurements, not hardware brightness or nits.
+Expand **Live graph** for ten seconds of Brightness (yellow, pre-filter average) and Dim (mint). It samples approximately 30 Hz while visible. Auto follows the active application, selecting its detected player when available or the whole window otherwise. Clicking the Softlight panel retains the last observed application. History is retained across window, Firefox tab and player changes; a vertical dashed line marks each context transition. Use Freeze to inspect transitions. Missing measurements create gaps. These are relative image measurements, not hardware brightness or nits.
 
 ## Limitations and privacy
 

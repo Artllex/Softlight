@@ -488,6 +488,11 @@ API int __cdecl NfTestHdrShader(float t, float s, int curve, float white, int co
 }
 
 API void __cdecl NfWindowReport(wchar_t* buffer, int length) { if(!buffer || length<1) return; std::lock_guard<std::mutex> lock(reportMutex); wcsncpy_s(buffer,length,windowReport.c_str(),_TRUNCATE); }
+API void __cdecl NfBrowserContext(HWND window,int generation) {
+    std::lock_guard<std::mutex> lock(playerMutex);
+    for(auto i=browserContexts.begin();i!=browserContexts.end();) {if(!IsWindow(i->first))i=browserContexts.erase(i);else ++i;}
+    if(window)browserContexts[window]=generation;
+}
 API void __cdecl NfPlayer(HWND window,int left,int top,int right,int bottom,int generation) {
     std::lock_guard<std::mutex> lock(playerMutex);
     if(window!=playerWindow || unsigned(generation)!=playerGeneration) playerGeneration=unsigned(generation);
