@@ -225,9 +225,9 @@ namespace NocnyFiltr {
             graphPanel=new RoundedPanel {BackColor=Theme.Card,Visible=false};
             graphPanel.SetBounds((int)(12*dpiScale),(int)(62*dpiScale),(int)(336*dpiScale),(int)(174*dpiScale));Controls.Add(graphPanel);
             liveGraph=new LiveGraph();liveGraph.SetBounds(0,(int)(28*dpiScale),graphPanel.Width,(int)(142*dpiScale));graphPanel.Controls.Add(liveGraph);
-            var target=new DarkButton {Text="Player",Font=Theme.Font(8,FontStyle.Regular)};
+            var target=new DarkButton {Text="Auto",Font=Theme.Font(8,FontStyle.Regular)};
             target.SetBounds((int)(8*dpiScale),(int)(3*dpiScale),(int)(85*dpiScale),(int)(24*dpiScale));
-            target.Click+=delegate {liveGraph.Page=!liveGraph.Page;target.Text=liveGraph.Page?"Page":"Player";liveGraph.Clear();};graphPanel.Controls.Add(target);
+            target.Click+=delegate {liveGraph.Clear();};graphPanel.Controls.Add(target);
             var freeze=new CheckBox {Text="Freeze",ForeColor=Theme.Muted,Font=Theme.Font(8,FontStyle.Regular)};freeze.SetBounds((int)(106*dpiScale),(int)(3*dpiScale),(int)(72*dpiScale),(int)(24*dpiScale));
             freeze.CheckedChanged+=delegate {liveGraph.Frozen=freeze.Checked;};graphPanel.Controls.Add(freeze);
             var legend=new Label {Text="Brightness",ForeColor=Color.FromArgb(242,200,110),Font=Theme.Font(7,FontStyle.Regular)};legend.SetBounds((int)(192*dpiScale),(int)(7*dpiScale),(int)(82*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(legend);
@@ -400,12 +400,12 @@ namespace NocnyFiltr {
             var firefox=new System.Text.StringBuilder();
             var others=new System.Text.StringBuilder();
             foreach(string line in raw.Split(new[]{"\r\n","\n"},StringSplitOptions.RemoveEmptyEntries)) {
-                int tab=line.LastIndexOf('\t');
+                int tab=line.IndexOf('\t');
                 if(tab>=0 && (line.Contains("Firefox video") || line.Contains("Firefox page:"))) {
                     int percent=line.IndexOf('%');
                     string label=line.Contains("Firefox video")?"Player":"Page";
-                    firefox.Append(label+" · Brightness "+line.Substring(tab+1)+"% · Dim "+line.Substring(0,percent)+"%\r\n");
-                } else others.Append(line+"\r\n");
+                    firefox.Append(label+" · Brightness "+line.Split('\t')[1]+"% · Dim "+line.Substring(0,percent)+"%\r\n");
+                } else others.Append((tab>=0?line.Substring(0,line.IndexOf('\t')):line)+"\r\n");
             }
             return firefox.ToString()+others;
         }

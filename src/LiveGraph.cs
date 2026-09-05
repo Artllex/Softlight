@@ -10,23 +10,39 @@ namespace NocnyFiltr {
         readonly List<Sample> samples=new List<Sample>();
         readonly Stopwatch clock=Stopwatch.StartNew();
         internal bool Frozen;
-        internal bool Page;
+
+
+        string source="";
         string latest="Waiting for player";
         internal LiveGraph() {DoubleBuffered=true;BackColor=Theme.Card;ForeColor=Theme.Muted;Font=Theme.Font(8,FontStyle.Regular);}
         internal void Clear() {samples.Clear();latest="Waiting for measurement";Invalidate();}
         internal void Observe(string report,bool active) {
             if(Frozen)return;
             float brightness=float.NaN,dim=float.NaN;
+            string chosen=null;
             if(active) foreach(string line in report.Split('\n')) {
-                if(!(Page?line.Contains("Firefox page:"):line.Contains("Firefox video")))continue;
-                int tab=line.LastIndexOf('\t'),percent=line.IndexOf('%');float b,d;
-                if(tab>=0 && percent>0 && float.TryParse(line.Substring(tab+1).Trim(),out b) && float.TryParse(line.Substring(0,percent),out d)) {brightness=b;dim=d;}
+                if(line.TrimEnd().EndsWith("\tactive")) {chosen=line;break;}
+            }
+            string[] parts=chosen==null?new string[0]:chosen.TrimEnd().Split('\t');
+            string nextSource=parts.Length>=3?parts[2]:"";
+            string label="Active window";
+            if(parts.Length>0) {
+                int percent=parts[0].IndexOf('%');
+                if(percent>=0)label=parts[0].Substring(percent+1).Trim();
+                if(label=="Firefox video")label="Player";
+                else if(label.StartsWith("Firefox page:"))label="Page";
+                if(label.Length>22)label=label.Substring(0,21)+"…";
+            }
+            if(source!=nextSource) {samples.Clear();source=nextSource;}
+            if(chosen!=null) {
+                string[] fields=chosen.Split('\t');int percent=fields[0].IndexOf('%');float b,d;
+                if(fields.Length>=2 && percent>0 && float.TryParse(fields[1].Trim(),out b) && float.TryParse(fields[0].Substring(0,percent),out d)) {brightness=b;dim=d;}
             }
             double now=clock.Elapsed.TotalSeconds;
             samples.Add(new Sample {Time=now,Brightness=brightness,Dim=dim});
             samples.RemoveAll(s=>s.Time<now-10);
-            latest=float.IsNaN(brightness)?(active?"No visible "+(Page?"page":"player"):"Filter paused"):
-                "Brightness "+brightness.ToString("0")+"%    Dim "+dim.ToString("0")+"%";
+            latest=float.IsNaN(brightness)?(active?"No visible active window":"Filter paused"):
+                label+" · Brightness "+brightness.ToString("0")+"%    Dim "+dim.ToString("0")+"%";
             Invalidate();
         }
         protected override void OnPaint(PaintEventArgs e) {

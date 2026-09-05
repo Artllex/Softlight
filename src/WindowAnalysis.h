@@ -2,13 +2,13 @@
 // Up to 30 or 60 Hz. One alpha per HWND preserves internal tonal relationships.
 static std::mutex reportMutex;
 static std::wstring windowReport;
-struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; int part=0; };
+struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; int part=0; bool browser=false; };
 static std::mutex playerMutex;
 static HWND playerWindow=nullptr;
 static RECT playerRect{},playerWindowRect{};
 static ULONGLONG playerSeen=0;
 static unsigned playerGeneration=0;
-struct WindowGain { float current=0, target=0, mean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0; bool hadSample=false; };
+struct WindowGain { float current=0, target=0, mean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0,cutUntil=0; bool hadSample=false; std::vector<std::pair<ULONGLONG,float>> recent; };
 static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual) {
     bool flash=mean>g.mean+.12f && mean>g.mean*1.6f && desired>g.current+.08f;
     if(regular || flash || manual) {
@@ -29,10 +29,15 @@ static float AdvanceWindowGain(float current,float target,float dt,float speed=5
 }
 // Video: a +/-10 pp fluctuation can span 20 pp between two observations.
 // Larger cuts in either direction immediately apply the corresponding dimming.
-static void ObserveVideoGain(WindowGain& g,float mean,float desired,bool manual) {
-    bool cut=g.hadSample && std::abs(mean-g.mean)>.22f;
+static void ObserveVideoGain(WindowGain& g,float mean,float desired,bool manual,ULONGLONG now=GetTickCount64()) {
+    g.recent.erase(std::remove_if(g.recent.begin(),g.recent.end(),[now](const auto& p){return now-p.first>120;}),g.recent.end());
+    bool cut=g.hadSample && std::abs(mean-g.mean)>.22001f;
+    for(const auto& p:g.recent) if(std::abs(mean-p.second)>.22001f) cut=true;
+    if(cut) g.cutUntil=now+150;
+    g.recent.push_back({now,mean});
+    if(g.recent.size()>64)g.recent.erase(g.recent.begin());
     g.target=desired;
-    if(manual || cut || (!g.hadSample && desired>g.current)) g.current=desired;
+    if(manual || cut || now<g.cutUntil || (!g.hadSample && desired>g.current)) g.current=desired;
     g.mean=mean;g.hadSample=true;
 }
 static float AdvanceVideoGain(float current,float target,float dt,float speed=50) {
@@ -51,6 +56,7 @@ struct WindowAnalyzer {
     std::vector<WindowRegion> windows;
     std::map<std::pair<HWND,int>,WindowGain> states;
     unsigned seenPlayerGeneration=0;
+    HWND lastActive=nullptr;
     RECT desktop{};
     double sampleTime=0; ULONGLONG tickTime=0;
     float previousStrength=-1;
@@ -72,7 +78,7 @@ struct WindowAnalyzer {
             !(pid==GetCurrentProcessId() && wcscmp(title,L"Nocny Filtr")==0) &&
             wcscmp(cls,L"Shell_TrayWnd")!=0 && wcscmp(cls,L"Shell_SecondaryTrayWnd")!=0;
         // Non-eligible foreground windows still occlude lower windows.
-        a.windows.push_back({h,intersection,eligible,title});
+        a.windows.push_back({h,intersection,eligible,title,0,wcscmp(cls,L"MozillaWindowClass")==0});
         return a.windows.size()<64;
     }
     void Update(Pipeline& gpu, ID3D11ShaderResourceView* source, UINT width, UINT height, RECT bounds, Settings& s,bool frameChanged) {
@@ -160,6 +166,10 @@ struct WindowAnalyzer {
         }
         s.mode=1;s.regionCount=float(windows.size());
         std::wstring report;
+        HWND active=GetForegroundWindow();DWORD activePid=0;GetWindowThreadProcessId(active,&activePid);
+        if(activePid!=GetCurrentProcessId())lastActive=active;
+        int selected=-1;
+        for(size_t i=0;i<windows.size();i++) if(windows[i].eligible && windows[i].handle==lastActive) {selected=int(i);break;}
         for(size_t i=0;i<windows.size();i++) {
             auto& w=windows[i];auto& g=states[{w.handle,w.part}];
             if(s.strength<=0) g.target=g.current=0;
@@ -171,8 +181,9 @@ struct WindowAnalyzer {
             s.gains[i][0]=g.current;
             if(w.eligible && report.size()<2500) {
                 report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title;
-                if(w.part || w.title.find(L"Firefox page: ")==0)
-                    report+=L"\t"+(g.hadSample?std::to_wstring(int(std::round(g.mean*100))):L"?");
+                report+=L"\t"+(g.hadSample && g.measurable?std::to_wstring(int(std::round(g.mean*100))):L"?");
+                report+=L"\t"+std::to_wstring(reinterpret_cast<uintptr_t>(w.handle))+L":"+std::to_wstring(w.part);
+                if(int(i)==selected) report+=L"\tactive";
                 report+=L"\r\n";
             }
         }

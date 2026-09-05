@@ -500,10 +500,10 @@ API int __cdecl NfTestResponse() {
     if(video.current!=.85f) return 30;
     ObserveVideoGain(video,.05f,0,false);
     if(video.current!=0 || video.target!=0) return 31;
-    video.mean=.4f;video.current=.5f;
+    video=WindowGain{};video.mean=.4f;video.current=.5f;video.hadSample=true;
     for(int i=0;i<240;i++) {
         float before=video.current;
-        ObserveVideoGain(video,i%2?.5f:.3f,i%2?.7f:.3f,false);
+        ObserveVideoGain(video,i%2?.5f:.3f,i%2?.7f:.3f,false,1000+i*8);
         if(video.current!=before) return 32;
         video.current=AdvanceVideoGain(video.current,video.target,1.f/120,75);
         if(std::abs(video.current-before)>.002f) return 33;
@@ -514,6 +514,20 @@ API int __cdecl NfTestResponse() {
         if(std::abs(value-.8f*std::exp(-1.f/2.5f))>.00001f) return 34;
     }
     ObserveVideoGain(video,.5f,.1f,true);if(video.current!=.1f) return 35;
+    WindowGain split;
+    ObserveVideoGain(split,.8f,.8f,false,1000);
+    ObserveVideoGain(split,.62f,.6f,false,1033);
+    if(split.current!=.8f) return 36;
+    ObserveVideoGain(split,.44f,.3f,false,1066);
+    if(split.current!=.3f) return 37;
+    ObserveVideoGain(split,.26f,.1f,false,1099);
+    if(split.current!=.1f) return 38;
+    ObserveVideoGain(split,.08f,0,false,1132);
+    if(split.current!=0) return 39;
+    split=WindowGain{};ObserveVideoGain(split,.05f,0,false,1000);
+    ObserveVideoGain(split,.23f,.2f,false,1033);
+    ObserveVideoGain(split,.41f,.6f,false,1066);
+    if(split.current!=.6f) return 40;
     WindowGain stable;stable.current=stable.target=.5f;stable.mean=.4f;
     for(int i=0;i<20000;i++) ObserveWindowGain(stable,.4f,.5f+(i%2?.02f:-.02f),true,false);
     if(stable.target!=.5f || stable.current!=.5f) return 20;

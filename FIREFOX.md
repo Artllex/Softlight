@@ -15,9 +15,9 @@ The extension must be loaded again after Firefox restarts. It is not signed or p
 
 The largest visible HTML video/player is measured separately from the rest of its Firefox window. Video pixels are excluded from page analysis, and each region receives one uniform dimming factor. YouTube uses the player container including controls; other sites use the video bounds.
 
-Video cuts above 22 brightness percentage points in either direction immediately apply target dimming on detection. Fluctuations within +/-10 pp are smoothed slowly. Speed scales that response (2.5-second time constant at 2x); Sudden change controls ordinary windows only. Manual strength changes apply immediately to video. Capture and presentation latency still apply.
+Video cuts above 22 brightness percentage points in either direction immediately apply target dimming on detection. Detection also considers the last 120 ms, capturing cuts spread across multiple frames; a short 150 ms follow-through tracks the end of the transition. Fluctuations within +/-10 pp are smoothed slowly. Speed scales that response (2.5-second time constant at 2x); Sudden change controls ordinary windows only. Manual strength changes apply immediately to video. Capture and presentation latency still apply.
 
-Expand **Live graph** for ten seconds of Brightness (yellow, pre-filter average) and Dim (mint). It samples approximately 30 Hz while visible. Switch Player/Page and use Freeze to inspect transitions. Missing measurements create gaps. These are relative image measurements, not hardware brightness or nits.
+Expand **Live graph** for ten seconds of Brightness (yellow, pre-filter average) and Dim (mint). It samples approximately 30 Hz while visible. Auto follows the active application, selecting its detected player when available or the whole window otherwise. Clicking the Softlight panel retains the last observed application. Use Freeze to inspect transitions. Missing measurements create gaps. These are relative image measurements, not hardware brightness or nits.
 
 ## Limitations and privacy
 
