@@ -1,5 +1,4 @@
-// SDR perceptual brightness. Black premultiplied-alpha mask, never an opaque
-// copy of the desktop. The OS composes this over the original live pixels.
+// Uniform masks and synchronized, already-dimmed frames.
 Texture2D desktopImage : register(t0);
 SamplerState pointSampler : register(s0);
 cbuffer Settings : register(b0) {
@@ -28,23 +27,27 @@ float Encode(float value) {
 float Decode(float value) {
     return value <= 0.04045 ? value / 12.92 : pow(max(0, (value + 0.055) / 1.055), 2.4);
 }
+float3 SourceColor(Vertex v) {
+    float2 uv=v.uv;
+    if(rotation==2)uv=float2(v.uv.y,1-v.uv.x);
+    if(rotation==3)uv=1-v.uv;
+    if(rotation==4)uv=float2(1-v.uv.y,v.uv.x);
+    return desktopImage.SampleLevel(pointSampler,uv,0).rgb;
+}
 float4 PS(Vertex v) : SV_TARGET {
+    if(mode==3)return float4(SourceColor(v)*(1-strength),1);
     if (mode == 1) {
         [loop] for (int i=0; i<(int)regionCount; ++i) {
             float4 r=regions[i];
             if (v.position.x>=r.x && v.position.y>=r.y && v.position.x<r.z && v.position.y<r.w)
-                return float4(0,0,0,gains[i].x);
+                return gains[i].y>0 ? float4(SourceColor(v)*(1-gains[i].x),1) : float4(0,0,0,gains[i].x);
         }
         return 0;
     }
     if (v.position.x >= previewRect.x && v.position.y >= previewRect.y &&
         v.position.x < previewRect.z && v.position.y < previewRect.w) return 0;
-    float2 uv = v.uv;
-    if (rotation == 2) uv = float2(v.uv.y, 1 - v.uv.x);
-    if (rotation == 3) uv = 1 - v.uv;
-    if (rotation == 4) uv = float2(1 - v.uv.y, v.uv.x);
-    float3 rgb = desktopImage.SampleLevel(pointSampler, uv, 0).rgb;
-    if (mode == 2) return float4(rgb,1);
+    float3 rgb=SourceColor(v);
+    if (mode == 2) return float4(clamp(dot(rgb,float3(.2126,.7152,.0722))/(hdr>0?whiteLevel:1),0,4),0,0,1);
     float luminance = dot(rgb, float3(0.2126, 0.7152, 0.0722));
     float relativeLinear = max(luminance, 0) / max(whiteLevel, 0.0001);
     float y = hdr > 0 ? Encode(relativeLinear) : luminance;

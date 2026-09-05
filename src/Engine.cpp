@@ -36,6 +36,7 @@ struct Status { int state, monitors, hdrMonitors, error; unsigned long long fram
 static std::mutex configMutex, windowsMutex;
 static Settings config;
 static std::atomic<bool> enabled{false}, stopping{false}, rebuild{false};
+static std::atomic<bool> protectFrames{false},testHoldCapture{false};
 static std::atomic<int> frameLimit{120}, state{0}, monitorCount{0}, hdrMonitors{0}, lastError{0};
 static std::atomic<unsigned long long> frames{0}, heartbeat{0};
 static std::thread worker;
@@ -96,12 +97,16 @@ struct Pipeline {
     ComPtr<ID3D11PixelShader> ps;
     ComPtr<ID3D11Buffer> constants;
     ComPtr<ID3D11SamplerState> sampler;
+    ComPtr<ID3D11RasterizerState> scissor;
     void Init(IDXGIAdapter* adapter, bool warp = false) {
         D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1};
         Check(D3D11CreateDevice(adapter, warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_UNKNOWN,
             nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION,
             &device, nullptr, &context));
         context.As(&clearContext);
+        ComPtr<IDXGIDevice1> dxgi; if(SUCCEEDED(device.As(&dxgi)))dxgi->SetMaximumFrameLatency(1);
+        D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;raster.ScissorEnable=TRUE;
+        Check(device->CreateRasterizerState(&raster,&scissor));
         Check(device->CreateVertexShader(vertexShader, sizeof(vertexShader), nullptr, &vs));
         Check(device->CreatePixelShader(pixelShader, sizeof(pixelShader), nullptr, &ps));
         D3D11_BUFFER_DESC bd{}; bd.ByteWidth = sizeof(Settings); bd.Usage = D3D11_USAGE_DEFAULT;
@@ -115,11 +120,31 @@ struct Pipeline {
     void DrawMask(ID3D11ShaderResourceView* input,ID3D11RenderTargetView* target,UINT width,UINT height,const Settings& s) {
         if(!clearContext) {Draw(input,target,width,height,s);return;}
         float color[4]{};context->ClearRenderTargetView(target,color);
-        // ClearView clips rectangle bounds to the target; reverse Z order means
-        // foreground regions (including transparent occluders) win exactly once.
-        for(int i=int(s.regionCount)-1;i>=0;--i) {
+        // Draw only visible fragments. Replaying every covered background window
+        // otherwise copies the same full-resolution desktop several times.
+        for(int i=0;i<int(s.regionCount);++i) {
             RECT r{LONG(s.regions[i][0]),LONG(s.regions[i][1]),LONG(s.regions[i][2]),LONG(s.regions[i][3])};
-            color[3]=s.gains[i][0];clearContext->ClearView(target,color,&r,1);
+            if(s.gains[i][1]<=0 && s.gains[i][0]<=0)continue;
+            std::vector<RECT> visible{r};
+            for(int j=0;j<i && !visible.empty();++j) {
+                RECT front{LONG(s.regions[j][0]),LONG(s.regions[j][1]),LONG(s.regions[j][2]),LONG(s.regions[j][3])};
+                std::vector<RECT> next;
+                for(auto& v:visible) {
+                    RECT overlap{};
+                    if(!IntersectRect(&overlap,&v,&front)){next.push_back(v);continue;}
+                    if(v.top<overlap.top)next.push_back({v.left,v.top,v.right,overlap.top});
+                    if(overlap.bottom<v.bottom)next.push_back({v.left,overlap.bottom,v.right,v.bottom});
+                    if(v.left<overlap.left)next.push_back({v.left,overlap.top,overlap.left,overlap.bottom});
+                    if(overlap.right<v.right)next.push_back({overlap.right,overlap.top,v.right,overlap.bottom});
+                }
+                visible=std::move(next);
+            }
+            if(s.gains[i][1]>0 && !visible.empty()) {
+                Settings copy=s;copy.mode=3;copy.strength=s.gains[i][0];
+                context->RSSetState(scissor.Get());
+                for(auto& v:visible) {context->RSSetScissorRects(1,&v);Draw(input,target,width,height,copy);}
+                context->RSSetState(nullptr);
+            } else if(!visible.empty()) {color[3]=s.gains[i][0];clearContext->ClearView(target,color,visible.data(),UINT(visible.size()));}
         }
     }
     void Draw(ID3D11ShaderResourceView* input, ID3D11RenderTargetView* target,
@@ -204,6 +229,14 @@ struct Monitor {
         ComPtr<ID3D11Texture2D> targetTexture; Check(targetResource.As(&targetTexture));
         probeMask = ReadPixel(targetTexture.Get(), x, y);
         if (probeComposite.load()) {
+            // Discard pending pre-probe frames, including deliberately held
+            // captures. The diagnostic must read the composition after affinity changes.
+            for(int i=0;i<8;i++) {
+                DXGI_OUTDUPL_FRAME_INFO oldInfo{};ComPtr<IDXGIResource> oldFrame;
+                HRESULT oldResult=duplication->AcquireNextFrame(0,&oldInfo,&oldFrame);
+                if(oldResult==DXGI_ERROR_WAIT_TIMEOUT)break;
+                Check(oldResult);Check(duplication->ReleaseFrame());
+            }
             // No captures run between exposing the mask and destroying it.
             // Read one known test pixel from DWM to verify actual alpha blending.
             CheckWin(SetWindowDisplayAffinity(window, WDA_NONE));
@@ -226,7 +259,7 @@ struct Monitor {
             }
             SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE);
             probeDisplay = color;
-            rebuild = true;
+            if(!testHoldCapture.load())rebuild = true;
         }
         probeDone = version;
     }
@@ -302,7 +335,7 @@ struct Monitor {
         DXGI_OUTDUPL_FRAME_INFO info{};
         ComPtr<IDXGIResource> resource;
         double acquireStart=PipelineTrace::Milliseconds();
-        HRESULT hr = duplication->AcquireNextFrame(monitorCount.load() == 1 ? 8 : 0, &info, &resource);
+        HRESULT hr = testHoldCapture.load()?DXGI_ERROR_WAIT_TIMEOUT:duplication->AcquireNextFrame(monitorCount.load() == 1 ? 4 : 0, &info, &resource);
         bool changed = false;
         if (hr != DXGI_ERROR_WAIT_TIMEOUT) {
             Check(hr);
@@ -329,7 +362,8 @@ struct Monitor {
         double analysisStart=PipelineTrace::Milliseconds();
         if (hasFrame) analyzer.Update(gpu, sourceView.Get(), width, height, desc.DesktopCoordinates, s, changed,captureTime);
         double analysisEnd=PipelineTrace::Milliseconds();
-        if (hasFrame && (memcmp(&s, &previous, sizeof(s)) != 0 || !IsWindowVisible(window))) {
+        bool copyFrame=false;for(int i=0;i<int(s.regionCount);i++)copyFrame=copyFrame || s.gains[i][1]>0;
+        if (hasFrame && ((changed && copyFrame) || memcmp(&s, &previous, sizeof(s)) != 0 || !IsWindowVisible(window))) {
             gpu.DrawMask(sourceView.Get(),target.Get(),width,height,s);
             Check(swapchain->Present(0, 0));
             PipelineTrace::Mark(3,0,analysisEnd-analysisStart,PipelineTrace::Milliseconds()-analysisEnd);
@@ -423,7 +457,7 @@ static void Worker() {
 #define API extern "C" __declspec(dllexport)
 API int __cdecl NfStart() {
     if (worker.joinable()) return 1;
-    stopping = false; enabled = false;
+    stopping = false; enabled = false;testHoldCapture=false;
     PipelineTrace::Start();
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         reinterpret_cast<LPCWSTR>(&NfStart), &module);
@@ -437,6 +471,8 @@ API void __cdecl NfConfigure(float t, float s, int curve, int fps) {
     config.curve = curve ? 1.0f : 0.0f;
     frameLimit = fps <= 30 ? 30 : 120;
 }
+API void __cdecl NfFlashProtection(int value) {protectFrames=value!=0;}
+API void __cdecl NfTestHoldCapture(int value) {testHoldCapture=value!=0;}
 API void __cdecl NfEnable(int value) {
     enabled = value != 0;
     if (!enabled) HideAll();
@@ -483,8 +519,8 @@ API int __cdecl NfTestShader(float t, float s, int curve, int rotate, int width,
         ComPtr<ID3D11Texture2D> output; Check(p.device->CreateTexture2D(&d, nullptr, &output));
         ComPtr<ID3D11RenderTargetView> rtv; Check(p.device->CreateRenderTargetView(output.Get(), nullptr, &rtv));
         Settings params{t, s, float(curve), float(rotate)};
-        if(curve==9) {params.mode=1;params.regionCount=2;params.regions[0][2]=float(d.Width/4);params.regions[0][3]=float(d.Height);params.regions[1][2]=float(d.Width);params.regions[1][3]=float(d.Height);params.gains[1][0]=s;}
-        if(curve==9)p.DrawMask(srv.Get(),rtv.Get(),d.Width,d.Height,params);
+        if(curve==9 || curve==10) {params.mode=1;params.regionCount=2;params.regions[0][2]=float(d.Width/4);params.regions[0][3]=float(d.Height);params.regions[1][2]=float(d.Width);params.regions[1][3]=float(d.Height);params.gains[1][0]=s;params.gains[1][1]=curve==10?1.f:0.f;}
+        if(curve==9 || curve==10)p.DrawMask(srv.Get(),rtv.Get(),d.Width,d.Height,params);
         else p.Draw(srv.Get(), rtv.Get(), d.Width, d.Height, params);
         d.Usage = D3D11_USAGE_STAGING; d.BindFlags = 0; d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         ComPtr<ID3D11Texture2D> staging; Check(p.device->CreateTexture2D(&d, nullptr, &staging));
@@ -510,7 +546,7 @@ API int __cdecl NfTestHdrShader(float t, float s, int curve, float white, int co
         d.BindFlags=D3D11_BIND_RENDER_TARGET;
         ComPtr<ID3D11Texture2D> output; Check(p.device->CreateTexture2D(&d,nullptr,&output));
         ComPtr<ID3D11RenderTargetView> rtv; Check(p.device->CreateRenderTargetView(output.Get(),nullptr,&rtv));
-        Settings settings{t,s,float(curve),1};settings.hdr=1;settings.whiteLevel=white;
+        Settings settings{t,s,float(curve),1};settings.hdr=1;settings.whiteLevel=white;if(curve==10)settings.mode=3;
         p.Draw(srv.Get(),rtv.Get(),count,1,settings);
         d.Usage=D3D11_USAGE_STAGING;d.BindFlags=0;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
         ComPtr<ID3D11Texture2D> staging;Check(p.device->CreateTexture2D(&d,nullptr,&staging));
@@ -553,6 +589,11 @@ API void __cdecl NfPlayer(HWND window,int left,int top,int right,int bottom,int 
     if(window) GetWindowRect(window,&playerWindowRect);
 }
 API int __cdecl NfTestResponse() {
+    WindowGain exposed;exposed.holdUntil=1250;
+    ObserveWindowGain(exposed,.9f,.8f,false,false,1000);
+    if(exposed.current!=.8f)return 70;
+    ObserveWindowGain(exposed,.1f,0,true,false,1010);
+    if(exposed.current!=.8f || exposed.target!=.8f)return 71;
     WindowGain video;ObserveVideoGain(video,.02f,0,false);
     ObserveVideoGain(video,.9f,.85f,false);
     if(video.current!=.85f) return 30;

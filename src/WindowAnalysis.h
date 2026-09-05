@@ -20,6 +20,10 @@ static void RememberBrowser(double time) {
 #include "DimmingResponse.h"
 struct WindowAnalyzer {
     std::vector<WindowRegion> windows;
+    std::map<HWND,std::wstring> localTitles;
+    float luminance[160*100]{};
+    bool hasLuminance=false;
+    float sampledWhiteLevel=0;
     std::map<std::pair<HWND,int>,WindowGain> states;
     unsigned seenPlayerGeneration=0;
     HWND lastActive=nullptr,pendingSelected=nullptr;
@@ -46,8 +50,18 @@ struct WindowAnalyzer {
         if(wcscmp(cls,overlayClass)==0 || wcscmp(cls,L"Progman")==0 || wcscmp(cls,L"WorkerW")==0) return TRUE;
         RECT r{}; if(FAILED(DwmGetWindowAttribute(h,DWMWA_EXTENDED_FRAME_BOUNDS,&r,sizeof(r)))) GetWindowRect(h,&r);
         RECT intersection{}; if(!IntersectRect(&intersection,&r,&a.desktop)) return TRUE;
-        wchar_t title[256]{}; GetWindowTextW(h,title,256);
         DWORD pid=0; GetWindowThreadProcessId(h,&pid);
+        wchar_t title[256]{};
+        if(pid==GetCurrentProcessId()) {
+            // The UI thread can be joining this worker during shutdown.
+            // GetWindowText would synchronously wait on that same thread.
+            auto cached=a.localTitles.find(h);
+            if(cached!=a.localTitles.end())wcsncpy_s(title,cached->second.c_str(),_TRUNCATE);
+            else {
+                DWORD_PTR length=0;
+                if(SendMessageTimeoutW(h,WM_GETTEXT,256,reinterpret_cast<LPARAM>(title),SMTO_ABORTIFHUNG|SMTO_BLOCK,20,&length))a.localTitles[h]=title;
+            }
+        } else GetWindowTextW(h,title,256);
         LONG_PTR style=GetWindowLongPtr(h,GWL_EXSTYLE);
         bool eligible=title[0] && !(style&WS_EX_TOOLWINDOW) &&
             !(pid==GetCurrentProcessId() && wcscmp(title,L"Nocny Filtr")==0) &&
@@ -104,31 +118,33 @@ struct WindowAnalyzer {
         if(sampleReady || frameChanged || manual) {
             if(!sampleTexture) {
                 D3D11_TEXTURE2D_DESC d{};d.Width=160;d.Height=100;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
-                d.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;d.BindFlags=D3D11_BIND_RENDER_TARGET;
+                d.Format=DXGI_FORMAT_R32_FLOAT;d.BindFlags=D3D11_BIND_RENDER_TARGET;
                 Check(gpu.device->CreateTexture2D(&d,nullptr,&sampleTexture));
                 Check(gpu.device->CreateRenderTargetView(sampleTexture.Get(),nullptr,&smallTarget));
                 d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
                 Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
             }
-            Settings sample=s;sample.mode=2;for(float& v:sample.previewRect)v=0;
-            gpu.Draw(source,smallTarget.Get(),160,100,sample);
-            gpu.context->CopyResource(staging.Get(),sampleTexture.Get());
-            double mapStart=PipelineTrace::Milliseconds();
-            D3D11_MAPPED_SUBRESOURCE map{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&map));
-            PipelineTrace::Mark(8,0,PipelineTrace::Milliseconds()-mapStart);
+            // Controls and regular response ticks can reuse the last measurement.
+            // A fresh frame always gets a fresh readback before it is presented.
+            if(frameChanged || !hasLuminance || sampledWhiteLevel!=s.whiteLevel) {
+                Settings sample=s;sample.mode=2;for(float& v:sample.previewRect)v=0;
+                gpu.Draw(source,smallTarget.Get(),160,100,sample);
+                gpu.context->CopyResource(staging.Get(),sampleTexture.Get());
+                double mapStart=PipelineTrace::Milliseconds();
+                D3D11_MAPPED_SUBRESOURCE map{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&map));
+                PipelineTrace::Mark(8,0,PipelineTrace::Milliseconds()-mapStart);
+                for(int y=0;y<100;y++)memcpy(luminance+y*160,static_cast<unsigned char*>(map.pData)+y*map.RowPitch,160*sizeof(float));
+                gpu.context->Unmap(staging.Get(),0);hasLuminance=true;sampledWhiteLevel=s.whiteLevel;
+            }
             double totals[64]{};int counts[64]{};double scene=0;int pixels=0;
             for(int y=0;y<100;y++) for(int x=0;x<160;x++) {
-                auto rgb=reinterpret_cast<float*>(static_cast<unsigned char*>(map.pData)+y*map.RowPitch)+4*x;
-                float lum=.2126f*rgb[0]+.7152f*rgb[1]+.0722f*rgb[2];
-                // HDR is linear scRGB; SDR composition uses encoded RGB.
-                lum=std::clamp(lum/(s.hdr?s.whiteLevel:1),0.0f,4.0f);
+                float lum=luminance[y*160+x];
                 POINT pt{bounds.left+LONG((x+.5)*width/160),bounds.top+LONG((y+.5)*height/100)};
                 for(size_t i=0;i<windows.size();i++) if(PtInRect(&windows[i].rect,pt)) {
                     if(windows[i].eligible) { totals[i]+=lum;counts[i]++;scene+=lum;pixels++; }
                     break;
                 }
             }
-            gpu.context->Unmap(staging.Get(),0);
             // Relative to visible app content, with a comfortable reference
             // for a single maximized bright window. No user threshold needed.
             float reference=std::clamp(pixels?float(scene/pixels)*.8f:.18f,.12f,.28f);
@@ -138,12 +154,12 @@ struct WindowAnalyzer {
                 if(!g.measurable && counts[i]>=8 && g.hadSample) g.holdUntil=now+200;
                 g.measurable=counts[i]>=8;
                 if(g.measurable)g.measuredMean=float(totals[i]/counts[i]);
-                if(g.measurable && (windows[i].part || now>=g.holdUntil)) {
+                if(g.measurable) {
                     float mean=float(totals[i]/counts[i]);
                     bool browserPart=windows[i].part || windows[i].title.find(L"Firefox page: ")==0;
                     float desired=WindowTarget(mean,browserPart?.18f:reference,s.strength);
                     if(windows[i].part) ObserveVideoGain(g,mean,desired,manual);
-                    else ObserveWindowGain(g,mean,desired,sampleReady,manual);
+                    else ObserveWindowGain(g,mean,desired,sampleReady,manual,now);
                     g.hadSample=true;
                 }
                 else g.target=g.current; // No visible samples is not a dark frame.
@@ -165,6 +181,8 @@ struct WindowAnalyzer {
             s.regions[i][0]=float(w.rect.left-bounds.left);s.regions[i][1]=float(w.rect.top-bounds.top);
             s.regions[i][2]=float(w.rect.right-bounds.left);s.regions[i][3]=float(w.rect.bottom-bounds.top);
             s.gains[i][0]=g.current;
+            DWORD affinity=0;GetWindowDisplayAffinity(w.handle,&affinity);
+            s.gains[i][1]=(protectFrames.load() && w.eligible && !affinity)?1.f:0.f;
             if(w.eligible && report.size()<2500) {
                 size_t rowStart=report.size();
                 report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title;
@@ -183,6 +201,7 @@ struct WindowAnalyzer {
         }
         // Keep hidden/minimized/off-screen windows until their HWND is destroyed.
         for(auto i=states.begin();i!=states.end();) {if(!IsWindow(i->first.first))i=states.erase(i);else ++i;}
+        for(auto i=localTitles.begin();i!=localTitles.end();) {if(!IsWindow(i->first))i=localTitles.erase(i);else ++i;}
         pendingSelected=selected>=0?windows[selected].handle:nullptr;
         pendingPart=selected>=0?windows[selected].part:0;pendingGeneration=pendingSelected?contexts[pendingSelected]:0;
         ownsSelection=selected>=0 || MonitorFromWindow(lastActive,MONITOR_DEFAULTTONEAREST)==MonitorFromPoint({bounds.left,bounds.top},MONITOR_DEFAULTTONEAREST);

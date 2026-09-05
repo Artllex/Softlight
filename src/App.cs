@@ -24,7 +24,7 @@ namespace NocnyFiltr {
         bool graphExpanded;
         System.Windows.Forms.Timer graphTimer;
         Label strengthValue, statusLabel, hotkeyLabel;
-        DarkButton toggle; Slider speedSlider,suddenSlider; Label speedValue,suddenValue; ToolStripMenuItem frequencyMenu, eco;
+        DarkButton toggle; Slider speedSlider,suddenSlider; Label speedValue,suddenValue; ToolStripMenuItem frequencyMenu, eco, flashProtection;
 
         System.Windows.Forms.Timer poll, saveTimer;
         ToolStripMenuItem trayToggle;
@@ -149,6 +149,8 @@ namespace NocnyFiltr {
             languageItem.DropDown.Renderer = new TrayRenderer();
             languageItem.DropDown.BackColor = Theme.Card;
             exitItem = new ToolStripMenuItem("",null,delegate { Exit(); });
+            flashProtection=new ToolStripMenuItem {Text=T("Ochrona przed błyskami"),CheckOnClick=true,Checked=settings.FlashProtection};
+            flashProtection.Click+=delegate {settings.FlashProtection=flashProtection.Checked;Apply(true);};
             eco=new ToolStripMenuItem {Text=T("Oszczędzaj energię (30 kl./s)"),CheckOnClick=true,Checked=settings.Fps==30};
             eco.Click+=delegate {settings.Fps=eco.Checked?30:120;if(eco.Checked && settings.Frequency>30)settings.Frequency=30;Apply(true);};
             frequencyMenu=new ToolStripMenuItem();
@@ -157,7 +159,7 @@ namespace NocnyFiltr {
                 ToolStripMenuItem item=new ToolStripMenuItem(hz+" Hz",null,delegate {SetFrequency(chosen);});item.Tag=hz;frequencyMenu.DropDownItems.Add(item);
             }
             frequencyMenu.DropDown.Renderer=new TrayRenderer();frequencyMenu.DropDown.BackColor=Theme.Card;
-            trayMenu.Items.AddRange(new ToolStripItem[]{panelItem,trayToggle,new ToolStripSeparator(),frequencyMenu,eco,languageItem,new ToolStripSeparator(),exitItem});
+            trayMenu.Items.AddRange(new ToolStripItem[]{panelItem,trayToggle,new ToolStripSeparator(),frequencyMenu,eco,flashProtection,languageItem,new ToolStripSeparator(),exitItem});
             SpaceMenu(trayMenu);
             tray = new NotifyIcon { Icon = moonIcon, Text = "Softlight", Visible = true, ContextMenuStrip = trayMenu };
             tray.MouseClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) TogglePanel(); };
@@ -193,6 +195,7 @@ namespace NocnyFiltr {
             hotkeyLabel.Text=T(hotkeyLabel.Tag is bool && !hotkeyRegistered ? "Skrót jest zajęty — użyj ikony obok zegara." : "Alt + F11: pokaż / ukryj panel");
             if(trayMenu!=null) {
                 frequencyMenu.Text=T("Częstotliwość")+" · "+settings.Frequency+" Hz";foreach(ToolStripMenuItem item in frequencyMenu.DropDownItems)item.Checked=(int)item.Tag==settings.Frequency;
+                flashProtection.Text=T("Ochrona przed błyskami");
                 eco.Text=T("Oszczędzaj energię (30 kl./s)");
                 panelItem.Text=T("Pokaż / ukryj panel");languageItem.Text=T("Język");exitItem.Text=T("Zakończ");
                 englishItem.Checked=settings.Language=="en";polishItem.Checked=settings.Language=="pl";
@@ -204,12 +207,14 @@ namespace NocnyFiltr {
             if (!ready) return;
             hotkeyLabel.Text=settings.AlwaysOnTop?T("Panel przypięty — odznacz, aby ukrywać."):T(hotkeyLabel.Tag is bool && !hotkeyRegistered ? "Skrót jest zajęty — użyj ikony obok zegara.":"Alt + F11: pokaż / ukryj panel");
             speedValue.Text=Math.Pow(4,(settings.Speed-50)/50.0).ToString("0.##")+"×"; suddenValue.Text=settings.SuddenSpeed+"%";
+            if(flashProtection!=null)flashProtection.Checked=settings.FlashProtection;
             if(eco!=null) eco.Checked=settings.Fps==30;
             if(frequencyMenu!=null) {frequencyMenu.Text=T("Częstotliwość")+" · "+settings.Frequency+" Hz";foreach(ToolStripMenuItem item in frequencyMenu.DropDownItems) item.Checked=(int)item.Tag==settings.Frequency;}
             strengthValue.Text=settings.Strength+"%"; strength.AccessibleDescription=strengthValue.Text;
             toggle.Selected=false;toggle.Text=settings.Enabled?T("Uruchamianie…"):T("○  Włącz filtr");toggle.Invalidate();
             if (!previewOnly) {
                 Native.NfConfigure(settings.Threshold / 100f, settings.Strength / 100f, 0, settings.Fps);
+                Native.NfFlashProtection(settings.FlashProtection?1:0);
                 Native.NfTiming(settings.Frequency,settings.Speed,settings.SuddenSpeed);
                 Native.NfEnable(settings.Enabled && !suspended && settings.Strength > 0 ? 1 : 0);
                 trayToggle.Text = settings.Enabled ? T("Wyłącz filtr") : T("Włącz filtr");

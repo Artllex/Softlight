@@ -8,10 +8,53 @@ using System.Windows.Forms;
 
 namespace NocnyFiltr {
     internal static class SelfTests {
+        internal static int FlashCheck(string path) {
+            var report=new List<string>();
+            try {
+                foreach(int protection in new[]{0,1}) {
+                    using(var patch=new Form {Text="Softlight flash test",StartPosition=FormStartPosition.Manual,AutoScaleMode=AutoScaleMode.None,
+                        Bounds=new Rectangle(150,200,600,360),FormBorderStyle=FormBorderStyle.None,BackColor=Color.FromArgb(24,24,24),TopMost=true}) {
+                        patch.Show();WaitUi(200);Native.NfStart();Native.NfConfigure(0,.95f,0,120);Native.NfTiming(30,75,30);
+                        Native.NfFlashProtection(protection);Native.NfEnable(1);WaitUi(1800);
+                        uint[] initial=null;
+                        for(int attempt=0;attempt<10;attempt++) {
+                            patch.BringToFront();WaitUi(200);initial=Probe(patch.PointToScreen(new Point(200,100)),false);
+                            if(Math.Abs((int)(initial[0]&255)-24)<=2 && (protection!=0?(initial[1]>>24)==255:(initial[1]>>24)<4))break;
+                        }
+                        report.Add("Dark setup: bounds="+patch.Bounds+" handle="+patch.Handle+" hit="+Native.WindowFromPoint(patch.PointToScreen(new Point(200,100)))+" source="+initial[0].ToString("X8"));
+                        Require((initial[0]&255)<40 && (protection!=0?(initial[1]>>24)==255:(initial[1]>>24)<4),"Dark test window is obscured or not ready: input="+initial[0].ToString("X8")+" output="+initial[1].ToString("X8"));
+                        // Hold the last captured dark frame while the real window turns white.
+                        // The compositor output, not the graph, must remain dark with protection.
+                        Native.NfTestHoldCapture(1);WaitUi(100);patch.BackColor=Color.White;patch.Refresh();WaitUi(100);
+                        var p=Probe(patch.PointToScreen(new Point(200,100)),true);int displayed=(int)(p[2]&255);
+                        report.Add((protection==0?"Overlay":"Protected frame")+": white source during held capture -> displayed "+displayed+"/255; input="+p[0].ToString("X8")+" output="+p[1].ToString("X8"));
+                        Require(protection==0?displayed>245:displayed<40,"First bright frame leaked through protection");
+                        if(protection!=0) {
+                            Native.NfTestHoldCapture(0);WaitUi(1500);
+                            p=Probe(patch.PointToScreen(new Point(200,100)),true);
+                            Require((p[0]&255)>245 && (p[1]>>24)==255 && (p[2]&255)<100,"Fresh white frame was not dimmed before presentation");
+                            Require(Math.Abs((int)(p[1]&255)-(int)(p[2]&255))<5,"DWM output does not match the processed frame");
+                            report.Add("PASS: fresh white capture is retained unmodified; processed HDR output="+(p[2]&255)+"/255, matching DWM composition.");
+                            WaitUi(500);patch.Location=new Point(700,650);WaitUi(700);
+                            var point=patch.PointToScreen(new Point(200,100));p=Probe(point,true);
+                            Require((p[2]&255)<100 && Native.WindowFromPoint(point)==patch.Handle,"Moved protected window or click-through failed");
+                            report.Add("PASS: protected window follows movement and remains click-through.");
+                            WaitUi(500);Native.NfFlashProtection(0);WaitUi(500);p=Probe(point,false);
+                            Require((p[1]>>24)<255 && (p[1]&0xffffff)==0,"Cannot switch back to a transparent mask");
+                            report.Add("PASS: protection can be disabled without restarting the filter.");
+                        }
+                        Native.NfEnable(0);Native.NfStop();patch.Hide();WaitUi(200);
+                    }
+                }
+                report.Add("PASS: real DWM composition reproduces the flash with a transparent mask and prevents it with a synchronized frame.");
+                File.WriteAllLines(path,report);return 0;
+            } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report);return 1;}
+            finally {Native.NfEnable(0);Native.NfStop();Native.NfTestHoldCapture(0);Native.NfFlashProtection(0);}
+        }
         internal static int FirefoxCheck(string path) {
             var report=new List<string>();
             try {
-                Native.NfStart();Native.NfConfigure(0,.70f,0,120);Native.NfTiming(30,75,30);Native.NfEnable(1);
+                Native.NfStart();Native.NfConfigure(0,.70f,0,120);Native.NfTiming(30,75,30);Native.NfFlashProtection(1);Native.NfEnable(1);
                 using(var bridge=new PlayerBridge()) {
                     DateTime end=DateTime.UtcNow.AddSeconds(55);string latest="";
                     while(DateTime.UtcNow<end) {
@@ -26,7 +69,7 @@ namespace NocnyFiltr {
                             Require(page!=null,"Test browser missing");
                             int pageAlpha=int.Parse(page.Substring(0,page.IndexOf('%')));
                             Require(pageAlpha<10,"Dark page still affected by bright video: "+page);
-                            report.Add("PASS: Firefox extension -> native messaging -> user-only pipe -> native regions.");
+                            report.Add("PASS: Firefox extension -> native messaging -> user-only pipe -> native regions with synchronized frame protection enabled.");
                             report.Add("PASS: video dimming="+alpha+"%, dark page="+pageAlpha+"%.");
                             File.WriteAllLines(path,report);return 0;
                         }
@@ -93,13 +136,13 @@ namespace NocnyFiltr {
             } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report);return 1;}
             finally {Native.NfEnable(0);Native.NfStop();}
         }
-        internal static int Motion(string path) {
+        internal static int Motion(string path,bool protection=false) {
             List<string> report=new List<string>();
             try {
-                using(Form patch=new Form { Bounds=new Rectangle(80,100,480,240), FormBorderStyle=FormBorderStyle.None, BackColor=Color.FromArgb(100,100,100), TopMost=true }) {
+                using(Form patch=new Form { Text="Softlight motion test", Bounds=new Rectangle(80,100,1000,600), FormBorderStyle=FormBorderStyle.None, BackColor=Color.FromArgb(100,100,100), TopMost=true }) {
                     int position=0;
                     patch.Paint+=delegate(object sender,PaintEventArgs e) { using(SolidBrush b=new SolidBrush(Color.FromArgb(180,180,180))) e.Graphics.FillRectangle(b,position,0,50,240); };
-                    patch.Show(); WaitUi(250); Native.NfStart(); Native.NfConfigure(.45f,.65f,1,120); Native.NfEnable(1); WaitUi(600);
+                    patch.Show(); WaitUi(250); Native.NfStart(); Native.NfConfigure(.45f,.65f,1,120); Native.NfFlashProtection(protection?1:0); Native.NfEnable(1); WaitUi(600);
                     for(int run=0;run<3;run++) {
                         EngineStatus before,after; Native.NfGetStatus(out before);
                         System.Diagnostics.Stopwatch clock=System.Diagnostics.Stopwatch.StartNew();
@@ -172,6 +215,15 @@ namespace NocnyFiltr {
                     Require(Math.Abs(output[i*4+3]-(i<256?0:102))<=1,"Window gain differs with pixel brightness or ignores foreground occlusion");
                 }
                 report.Add("PASS: whole-window shader: all colours and shadows share the same alpha; foreground region blocks the lower mask.");
+                Require(Native.NfTestShader(0,.4f,10,1,1024,1,input,output)==0,"Protected frame shader call");
+                for(int i=0;i<1024;i++) {
+                    Require(output[i*4+3]==(i<256?0:255),"Protected regions must be opaque; foreground exclusions transparent");
+                    for(int c=0;c<3;c++)Require(Math.Abs(output[i*4+c]-(i<256?0:input[i*4+c]*.6))<=1,"Protected frame colour scaling");
+                }
+                float[] linear={4,2,1,1,.5f,.25f,.1f,1};float[] rendered=new float[8];
+                Require(Native.NfTestHdrShader(0,.4f,10,1,2,linear,rendered)==0,"Protected HDR frame shader call");
+                for(int i=0;i<8;i++)Require(Math.Abs(rendered[i]-(i%4==3?1:linear[i]*.6))<.00001,"HDR protected frame preserves linear colour relationships");
+                report.Add("PASS: synchronized frame colours, opaque output, foreground exclusions and HDR scaling.");
                 float[] hdrInput=new float[4096],hdrOutput=new float[4096];
                 for(int i=0;i<1024;i++) {
                     double v=i<256 ? Tone.Decode(i/255.0) : Math.Pow(2,rng.NextDouble()*10-4);
@@ -196,11 +248,11 @@ namespace NocnyFiltr {
                 Settings malformed = Settings.Read(configPath);
                 Require(malformed.Threshold==95 && malformed.Strength==0 && malformed.Curve==1 && malformed.Fps==30 && malformed.Enabled,"Settings bounds");
                 Settings defaults = new Settings();
-                Require(defaults.Strength==70 && defaults.Speed==75 && defaults.SuddenSpeed==30,"Requested defaults");
-                Settings original = new Settings { Threshold = 33, Strength = 71, Curve = 0, Fps = 30, Enabled = true, Speed = 80, SuddenSpeed = 20, Frequency = 12, AlwaysOnTop = true, Language = "pl" };
+                Require(defaults.FlashProtection && defaults.Strength==70 && defaults.Speed==75 && defaults.SuddenSpeed==30,"Requested defaults");
+                Settings original = new Settings { FlashProtection=false, Threshold = 33, Strength = 71, Curve = 0, Fps = 30, Enabled = true, Speed = 80, SuddenSpeed = 20, Frequency = 12, AlwaysOnTop = true, Language = "pl" };
                 original.Write(configPath); Settings loaded = Settings.Read(configPath);
                 Require(loaded.Threshold==33 && loaded.Strength==71 && loaded.Curve==0 && loaded.Fps==30 && loaded.Enabled,"Settings round trip");
-                Require(loaded.Speed==80 && loaded.SuddenSpeed==20 && loaded.Frequency==12 && loaded.AlwaysOnTop && loaded.Language=="pl","All preferences round trip");
+                Require(!loaded.FlashProtection && loaded.Speed==80 && loaded.SuddenSpeed==20 && loaded.Frequency==12 && loaded.AlwaysOnTop && loaded.Language=="pl","All preferences round trip");
                 File.Delete(configPath);
                 report.Add("PASS: defaults 70%, 2x, 30%; settings validation, atomic replacement and all preferences persistence.");
                 report.Add("RESULT: PASS");

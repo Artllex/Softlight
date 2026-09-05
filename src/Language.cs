@@ -19,6 +19,7 @@ namespace NocnyFiltr {
             {"Stałe nachylenie powyżej progu.","Constant slope above the threshold."},
             {"Łagodne wejście; coraz silniej ścina jasne odcienie.","Smooth transition; stronger dimming of highlights."},
             {"KRZYWA I PODGLĄD","CURVE AND PREVIEW"}, {"Uruchamiaj z Windows","Start with Windows"},
+            {"Ochrona przed błyskami","Flash protection"},
             {"Oszczędzaj energię (30 kl./s)","Save power (30 fps)"},
             {"Alt + F11: pokaż / ukryj panel","Alt + F11: show / hide panel"},
             {"Skrót jest zajęty — użyj ikony obok zegara.","Shortcut unavailable — use the tray icon."},

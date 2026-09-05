@@ -1,7 +1,9 @@
 #pragma once
 // Response policy shared by runtime analysis and native regression tests.
 struct WindowGain { float current=0, target=0, mean=0, measuredMean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0,cutUntil=0; bool hadSample=false; std::vector<std::pair<ULONGLONG,float>> recent; };
-static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual) {
+static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual,ULONGLONG now=GetTickCount64()) {
+    // Re-exposure holds may postpone brightening, never protection from a bright frame.
+    if(now<g.holdUntil && desired<=g.current+.02001f) {g.target=g.current;return;}
     bool flash=mean>g.mean+.12f && mean>g.mean*1.6f && desired>g.current+.08f;
     if(regular || flash || manual) {
         if(manual || std::abs(desired-g.target)>.02001f) g.target=desired;
