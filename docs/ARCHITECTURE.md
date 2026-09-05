@@ -4,16 +4,18 @@
 
 - `Program.cs`: startup, single instance routing and diagnostic command dispatch.
 - `App.cs`: application lifecycle, settings application, tray behavior and main panel.
-- `MainForm.Graph.cs`: collapsible diagnostic section and its sampling timer.
+- `MainForm.Graph.cs`: collapsible diagnostic section and its redraw timer.
 - `ThemeControls.cs`: shared appearance and controls.
 - `WindowReport.cs`: the single parser for native readings and list presentation.
 - `GraphHistory.cs`: timestamped ten-second history, context boundaries and Freeze; no UI or native calls.
 - `LiveGraph.cs`: rendering and adaptation of the history model to a control.
 - `PlayerBridge.cs`: pipe reception, validated browser lookup and native updates, with these operations separated into methods.
 - `DimmingResponse.h`: existing window/video response policies shared by runtime and native regression checks.
-- `WindowAnalysis.h`: visible-region discovery, sampling, state and reporting.
+- `WindowAnalysis.h`: visible-region discovery, frame-matched browser snapshots, sampling, state and reporting.
+- `GraphTimeline.h`: bounded native timeline, monotonic sample times and separately timestamped context events.
+- `PipelineTrace.h`: opt-in timing diagnostics without screen content.
 
-The native report ABI and Firefox extension protocol are unchanged. Native report fields are dimming/title, brightness (`?` when unavailable), source identity, and an optional `active` marker. Only the parser handles this representation; list and graph share the resulting readings. Source identity includes the browser generation so tab changes retain history and create boundaries.
+The window-list report ABI remains compatible. The Firefox protocol additionally carries browser window identity and activation timing; `NfGraphRead` supplies bounded batches of engine-timed graph readings and event markers. See [pipeline timing](PIPELINE.md). Native report fields are dimming/title, brightness (`?` when unavailable), source identity, and an optional `active` marker. Only the parser handles this representation; list and graph share the resulting readings. Source identity includes the browser generation so tab changes retain history and create boundaries.
 
 ## Invariants
 

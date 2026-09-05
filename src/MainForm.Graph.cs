@@ -19,7 +19,7 @@ namespace NocnyFiltr {
             var legend=new Label {Text="Brightness",ForeColor=Color.FromArgb(242,200,110),Font=Theme.Font(7,FontStyle.Regular)};legend.SetBounds((int)(192*dpiScale),(int)(7*dpiScale),(int)(82*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(legend);
             var dimLegend=new Label {Text="Dim",ForeColor=Theme.Accent,Font=Theme.Font(7,FontStyle.Regular)};dimLegend.SetBounds((int)(282*dpiScale),(int)(7*dpiScale),(int)(45*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(dimLegend);dimLegend.BringToFront();
             graphTimer=new System.Windows.Forms.Timer {Interval=33};
-            graphTimer.Tick+=delegate {if(!previewOnly && Visible && graphExpanded && !liveGraph.Frozen) {var data=new System.Text.StringBuilder(4096);Native.NfWindowReport(data,data.Capacity);liveGraph.Observe(data.ToString(),settings.Enabled && settings.Strength>0 && !suspended);}};
+            graphTimer.Tick+=delegate {if(!previewOnly && Visible && graphExpanded && !liveGraph.Frozen) {liveGraph.ReadNative(settings.Enabled && settings.Strength>0 && !suspended);}};
             graphTimer.Start();
         }
         internal void ToggleGraph() {

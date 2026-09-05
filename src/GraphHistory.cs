@@ -11,26 +11,33 @@ namespace NocnyFiltr {
             internal bool ContextChanged;
         }
         internal readonly List<Sample> Samples = new List<Sample>();
+        internal readonly List<double> Boundaries = new List<double>();
         internal bool Frozen;
         internal string Latest = "Waiting for player";
         string source = "";
 
         internal void Clear() {
             Samples.Clear();
+            Boundaries.Clear();
             source = "";
             Latest = "Waiting for measurement";
         }
 
-        internal void Observe(WindowReading reading, bool active, double now) {
+        internal void MarkContext(double time) {
+            if(!Frozen)Boundaries.Add(time);
+        }
+
+        internal void Observe(WindowReading reading, bool active, double now, bool detectContext = true) {
             if (Frozen) return;
             if (!active) reading = null;
             string nextSource = reading == null ? "" : reading.Source;
-            bool changed = Samples.Count > 0 && source != nextSource;
+            bool changed = detectContext && Samples.Count > 0 && source != nextSource;
             source = nextSource;
             float brightness = reading == null ? float.NaN : reading.Brightness;
             float dim = reading == null ? float.NaN : reading.Dim;
             Samples.Add(new Sample { Time = now, Brightness = brightness, Dim = dim, ContextChanged = changed });
             Samples.RemoveAll(sample => sample.Time < now - DurationSeconds);
+            Boundaries.RemoveAll(time => time < now - DurationSeconds);
             string label = reading == null ? "Active window" : reading.Label;
             if (label.Length > 22) label = label.Substring(0, 21) + "…";
             Latest = float.IsNaN(brightness)

@@ -59,7 +59,7 @@ namespace NocnyFiltr {
                     dark.Bounds=bright.Bounds;dark.BringToFront();WaitUi(3300);
                     dark.Location=new Point(900,150);dark.Size=new Size(400,400);WaitUi(100);
                     restored=Probe(bright.PointToScreen(new Point(250,100)),false)[1]>>24;
-                    Require(Math.Abs(restored-(double)(light[1]>>24))<=8,"Fully covered window faded toward zero");
+                    Require(Math.Abs(restored-(double)(light[1]>>24))<=8,"Fully covered window faded toward zero: restored="+restored+", expected="+(light[1]>>24));
                     report.Add("PASS: fully covered window retains dimming instead of fading to zero.");
                     Native.NfConfigure(0,.95f,0,120);WaitUi(5000);
                     uint strong=Probe(bright.PointToScreen(new Point(250,100)),false)[1]>>24;
@@ -74,6 +74,12 @@ namespace NocnyFiltr {
                     dark.Hide();bright.Location=new Point(700,650);WaitUi(1500);
                     Require((Probe(bright.PointToScreen(new Point(200,100)),false)[1]>>24)>20,"Mask did not follow moved window");
                     report.Add("PASS: mask follows whole window after moving.");
+                    var composed=Probe(bright.PointToScreen(new Point(200,100)),true);
+                    double ratio=1-(composed[1]>>24)/255.0;
+                    double expectedDisplay=255*(status.HdrMonitors>0?Tone.Encode(ratio):ratio);
+                    Require(Math.Abs((composed[2]&255)-expectedDisplay)<6,"Compositor does not show the submitted mask");
+                    report.Add("PASS: actual DWM composition after skipped redraws: white="+(composed[2]&255)+", expected="+expectedDisplay.ToString("0.0")+".");
+                    WaitUi(1500);
                     Native.NfEnable(0);WaitUi(400);Native.NfGetStatus(out status);Require(status.State==3,"Pause failed");
                     Native.NfEnable(1);WaitUi(1200);Native.NfGetStatus(out status);Require(status.State==2,"Resume failed");
                     report.Add("PASS: pause and resume.");

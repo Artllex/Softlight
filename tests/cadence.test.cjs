@@ -5,7 +5,7 @@ const code=fs.readFileSync(require('node:path').join(__dirname,'../firefox/conte
  const video={closest:()=>null,getBoundingClientRect:()=>({left:10,top,right:610,bottom:top+300}),contains:x=>x===video};
  const ctx={performance:{now:()=>now},document:{hidden:false,querySelectorAll:()=>{scans++;return present?[video]:[]},elementFromPoint:()=>video,addEventListener(){},removeEventListener(){}},
  getComputedStyle:()=>({visibility:'visible',display:'block',opacity:'1'}),innerWidth:800,innerHeight:600,devicePixelRatio:1,
- window:{mozInnerScreenX:0,mozInnerScreenY:0},browser:{runtime:{sendMessage:async m=>sent.push(m)}},setInterval:f=>(interval=f,1),clearInterval:()=>stopped++,
+ window:{mozInnerScreenX:0,mozInnerScreenY:0},browser:{runtime:{onMessage:{addListener(){},removeListener(){}},sendMessage:async m=>sent.push(m)}},setInterval:f=>(interval=f,1),clearInterval:()=>stopped++,
  requestAnimationFrame:f=>(frame=f,1),cancelAnimationFrame(){},addEventListener:(name,f)=>{if(name==='scroll')scroll=f},removeEventListener(){}};
  const flush=()=>new Promise(r=>setImmediate(r));
  vm.runInNewContext(code,ctx);await flush();

@@ -1,6 +1,6 @@
 #pragma once
 // Response policy shared by runtime analysis and native regression tests.
-struct WindowGain { float current=0, target=0, mean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0,cutUntil=0; bool hadSample=false; std::vector<std::pair<ULONGLONG,float>> recent; };
+struct WindowGain { float current=0, target=0, mean=0, measuredMean=0; bool measurable=false; DWORD process=0; ULONGLONG lastSeen=0,holdUntil=0,cutUntil=0; bool hadSample=false; std::vector<std::pair<ULONGLONG,float>> recent; };
 static void ObserveWindowGain(WindowGain& g,float mean,float desired,bool regular,bool manual) {
     bool flash=mean>g.mean+.12f && mean>g.mean*1.6f && desired>g.current+.08f;
     if(regular || flash || manual) {

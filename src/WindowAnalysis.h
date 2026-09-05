@@ -1,5 +1,5 @@
-// Window bounds are refreshed at presentation rate; brightness is sampled at
-// Up to 30 or 60 Hz. One alpha per HWND preserves internal tonal relationships.
+// Window bounds are refreshed at presentation rate.
+// The selected analysis rate controls ordinary changes; new frames detect cuts.
 static std::mutex reportMutex;
 static std::wstring windowReport;
 struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; int part=0; bool browser=false; };
@@ -8,13 +8,30 @@ static HWND playerWindow=nullptr;
 static RECT playerRect{},playerWindowRect{};
 static ULONGLONG playerSeen=0;
 static unsigned playerGeneration=0;
-static std::map<HWND,int> browserContexts;
+static std::map<HWND,int> browserContexts,announcedContexts;
+struct BrowserSnapshot {
+    double time; HWND window;RECT rect,windowRect;unsigned generation;std::map<HWND,int> contexts;
+};
+static std::deque<BrowserSnapshot> browserHistory;
+static void RememberBrowser(double time) {
+    browserHistory.push_back({time,playerWindow,playerRect,playerWindowRect,playerGeneration,browserContexts});
+    while(browserHistory.size()>64)browserHistory.pop_front();
+}
 #include "DimmingResponse.h"
 struct WindowAnalyzer {
     std::vector<WindowRegion> windows;
     std::map<std::pair<HWND,int>,WindowGain> states;
     unsigned seenPlayerGeneration=0;
-    HWND lastActive=nullptr;
+    HWND lastActive=nullptr,pendingSelected=nullptr;
+    std::wstring pendingReport,pendingReading;
+    double pendingTime=0;int pendingPart=0,pendingGeneration=0;
+    bool ownsSelection=false;
+    std::map<HWND,int> contexts;
+    void Publish() {
+        {std::lock_guard<std::mutex> lock(reportMutex);windowReport=pendingReport;}
+        // The gain in this sample has now been submitted to the compositor.
+        if(ownsSelection)GraphTimeline::Sample(pendingTime,pendingSelected,pendingPart,pendingGeneration,pendingReading);
+    }
     RECT desktop{};
     double sampleTime=0; ULONGLONG tickTime=0;
     float previousStrength=-1;
@@ -39,22 +56,30 @@ struct WindowAnalyzer {
         a.windows.push_back({h,intersection,eligible,title,0,wcscmp(cls,L"MozillaWindowClass")==0});
         return a.windows.size()<64;
     }
-    void Update(Pipeline& gpu, ID3D11ShaderResourceView* source, UINT width, UINT height, RECT bounds, Settings& s,bool frameChanged) {
+    void Update(Pipeline& gpu, ID3D11ShaderResourceView* source, UINT width, UINT height, RECT bounds, Settings& s,bool frameChanged,double captureTime) {
         desktop=bounds; windows.clear(); EnumWindows(Enumerate,reinterpret_cast<LPARAM>(this));
         ULONGLONG now=GetTickCount64();
         {
             std::lock_guard<std::mutex> lock(playerMutex);
-            if(seenPlayerGeneration!=playerGeneration) {
+            BrowserSnapshot snapshot{0,playerWindow,playerRect,playerWindowRect,playerGeneration,browserContexts};
+            // Never reinterpret a captured frame with metadata from a later tab.
+            if(!browserHistory.empty()) {
+                snapshot=browserHistory.front();
+                for(auto i=browserHistory.rbegin();i!=browserHistory.rend();++i)if(i->time<=captureTime){snapshot=*i;break;}
+            }
+            contexts=snapshot.contexts;
+            HWND framePlayer=snapshot.window;unsigned frameGeneration=snapshot.generation;
+            if(seenPlayerGeneration!=frameGeneration) {
                 for(auto it=states.begin();it!=states.end();) {if(it->first.second)it=states.erase(it);else ++it;}
-                seenPlayerGeneration=playerGeneration;
+                seenPlayerGeneration=frameGeneration;
             }
             RECT current{};
-            if(playerWindow && now-playerSeen<500 &&
-                GetWindowRect(playerWindow,&current) && EqualRect(&current,&playerWindowRect)) {
-                for(size_t i=0;i<windows.size() && windows.size()<64;i++) if(windows[i].handle==playerWindow && windows[i].eligible) {
+            if(framePlayer && now-playerSeen<500 &&
+                GetWindowRect(framePlayer,&current) && EqualRect(&current,&snapshot.windowRect)) {
+                for(size_t i=0;i<windows.size() && windows.size()<64;i++) if(windows[i].handle==framePlayer && windows[i].eligible) {
                     RECT clipped{};
-                    if(IntersectRect(&clipped,&windows[i].rect,&playerRect)) {
-                        WindowRegion video{playerWindow,clipped,true,L"Firefox video",1};
+                    if(IntersectRect(&clipped,&windows[i].rect,&snapshot.rect)) {
+                        WindowRegion video{framePlayer,clipped,true,L"Firefox video",1};
                         windows[i].title=L"Firefox page: "+windows[i].title;
                         windows.insert(windows.begin()+i,video);
                     }
@@ -88,7 +113,9 @@ struct WindowAnalyzer {
             Settings sample=s;sample.mode=2;for(float& v:sample.previewRect)v=0;
             gpu.Draw(source,smallTarget.Get(),160,100,sample);
             gpu.context->CopyResource(staging.Get(),sampleTexture.Get());
+            double mapStart=PipelineTrace::Milliseconds();
             D3D11_MAPPED_SUBRESOURCE map{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&map));
+            PipelineTrace::Mark(8,0,PipelineTrace::Milliseconds()-mapStart);
             double totals[64]{};int counts[64]{};double scene=0;int pixels=0;
             for(int y=0;y<100;y++) for(int x=0;x<160;x++) {
                 auto rgb=reinterpret_cast<float*>(static_cast<unsigned char*>(map.pData)+y*map.RowPitch)+4*x;
@@ -110,6 +137,7 @@ struct WindowAnalyzer {
                 if(!windows[i].eligible) {g.target=g.current=0;continue;}
                 if(!g.measurable && counts[i]>=8 && g.hadSample) g.holdUntil=now+200;
                 g.measurable=counts[i]>=8;
+                if(g.measurable)g.measuredMean=float(totals[i]/counts[i]);
                 if(g.measurable && (windows[i].part || now>=g.holdUntil)) {
                     float mean=float(totals[i]/counts[i]);
                     bool browserPart=windows[i].part || windows[i].title.find(L"Firefox page: ")==0;
@@ -123,7 +151,7 @@ struct WindowAnalyzer {
             if(sampleReady) sampleTime=sampleNow;
         }
         s.mode=1;s.regionCount=float(windows.size());
-        std::wstring report;
+        std::wstring report;pendingReading.clear();pendingTime=GraphTimeline::Clock();
         HWND active=GetForegroundWindow();DWORD activePid=0;GetWindowThreadProcessId(active,&activePid);
         if(activePid!=GetCurrentProcessId())lastActive=active;
         int selected=-1;
@@ -138,20 +166,26 @@ struct WindowAnalyzer {
             s.regions[i][2]=float(w.rect.right-bounds.left);s.regions[i][3]=float(w.rect.bottom-bounds.top);
             s.gains[i][0]=g.current;
             if(w.eligible && report.size()<2500) {
+                size_t rowStart=report.size();
                 report+=std::to_wstring(int(std::round(g.current*100)))+L"%  "+w.title;
-                report+=L"\t"+(g.hadSample && g.measurable?std::to_wstring(int(std::round(g.mean*100))):L"?");
+                report+=L"\t"+(g.measurable?std::to_wstring(int(std::round(g.measuredMean*100))):L"?");
                 report+=L"\t"+std::to_wstring(reinterpret_cast<uintptr_t>(w.handle))+L":"+std::to_wstring(w.part);
                 if(w.browser || w.part) {
-                    std::lock_guard<std::mutex> lock(playerMutex);
-                    auto context=browserContexts.find(w.handle);
-                    report+=L":"+std::to_wstring(context!=browserContexts.end()?context->second:0);
+                    auto context=contexts.find(w.handle);
+                    report+=L":"+std::to_wstring(context!=contexts.end()?context->second:0);
                 }
-                if(int(i)==selected) report+=L"\tactive";
+                if(int(i)==selected) {
+                    report+=L"\tactive";pendingReading=report.substr(rowStart);
+                    PipelineTrace::Mark(2, w.browser || w.part ? contexts[w.handle] : 0,g.measuredMean*100,g.current*100,w.part);
+                }
                 report+=L"\r\n";
             }
         }
         // Keep hidden/minimized/off-screen windows until their HWND is destroyed.
         for(auto i=states.begin();i!=states.end();) {if(!IsWindow(i->first.first))i=states.erase(i);else ++i;}
-        {std::lock_guard<std::mutex> lock(reportMutex);windowReport=report;}
+        pendingSelected=selected>=0?windows[selected].handle:nullptr;
+        pendingPart=selected>=0?windows[selected].part:0;pendingGeneration=pendingSelected?contexts[pendingSelected]:0;
+        ownsSelection=selected>=0 || MonitorFromWindow(lastActive,MONITOR_DEFAULTTONEAREST)==MonitorFromPoint({bounds.left,bounds.top},MONITOR_DEFAULTTONEAREST);
+        pendingReport=std::move(report);
     }
 };

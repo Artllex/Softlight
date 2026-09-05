@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -10,7 +11,8 @@ using System.Web.Script.Serialization;
 
 namespace NocnyFiltr {
     internal sealed class PlayerBridge : IDisposable {
-        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] static extern void NfBrowserContext(IntPtr window,int generation);
+        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern void NfTraceMark(int stage,int generation,double a,double b,double c);
+        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] static extern void NfBrowserUpdate(IntPtr window,int generation,double changedAt,int pending,int visible,int left,int top,int right,int bottom);
         [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern void NfPlayer(IntPtr window,int left,int top,int right,int bottom,int generation);
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr window,StringBuilder text,int count);
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,StringBuilder text,int count);
@@ -20,9 +22,10 @@ namespace NocnyFiltr {
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
         internal static DateTime LastSeen=DateTime.MinValue;
         [StructLayout(LayoutKind.Sequential)] struct Bounds {public int Left,Top,Right,Bottom;}
-        public sealed class Message {public string title {get;set;} public int generation {get;set;} public bool visible {get;set;} public int left {get;set;} public int top {get;set;} public int right {get;set;} public int bottom {get;set;} }
+        public sealed class Message {public int windowId {get;set;} public bool pending {get;set;} public double changedAt {get;set;} public double sentAt {get;set;} public string title {get;set;} public int generation {get;set;} public bool visible {get;set;} public int left {get;set;} public int top {get;set;} public int right {get;set;} public int bottom {get;set;} }
         internal static string LastMessage="none";
         IntPtr cachedWindow=IntPtr.Zero;
+        readonly Dictionary<int,IntPtr> browserWindows=new Dictionary<int,IntPtr>();
         volatile bool stopping; NamedPipeServerStream server; Thread worker;
         internal PlayerBridge() { worker=new Thread(Run) {IsBackground=true};worker.Start(); }
         void Run() {
@@ -44,23 +47,26 @@ namespace NocnyFiltr {
         }
         void ProcessMessage(Message m) {
             LastSeen=DateTime.UtcNow;
+            if(m!=null)NfTraceMark(4,m.generation,m.sentAt,m.visible?1:0,0);
             LastMessage=m==null?"empty":("visible="+m.visible+" rect="+m.left+","+m.top+","+m.right+","+m.bottom);
             IntPtr window=Native.GetForegroundWindow();var cls=new StringBuilder(128);GetClassName(window,cls,cls.Capacity);
             if(m!=null && m.visible && string.IsNullOrEmpty(m.title))return;
             if(m!=null && !string.IsNullOrEmpty(m.title)) {
-                IntPtr match=FindBrowser(m.title);
-                if(match==IntPtr.Zero)return;
-                cachedWindow=window=match;GetClassName(window,cls,cls.Capacity);
-                NfBrowserContext(window,m.generation);
+                IntPtr match;
+                if(!browserWindows.TryGetValue(m.windowId,out match) || !IsWindowVisible(match) || !IsFirefox(match))match=FindBrowser(m.title);
+                if(match==IntPtr.Zero) {NfTraceMark(5,m.generation,0,0,0);return;}
+                cachedWindow=window=match;browserWindows[m.windowId]=match;GetClassName(window,cls,cls.Capacity);
             }
+            if(m!=null)NfTraceMark(6,m.generation,0,0,0);
             Bounds b;
             if(m!=null && m.visible && cls.ToString()=="MozillaWindowClass" && GetWindowRect(window,out b) &&
                 m.left>=b.Left && m.top>=b.Top && m.right<=b.Right && m.bottom<=b.Bottom &&
                 (long)m.right-m.left>=32 && (long)m.bottom-m.top>=24) {
-                NfPlayer(window,m.left,m.top,m.right,m.bottom,m.generation);
-            } else NfPlayer(IntPtr.Zero,0,0,0,0,0);
+                NfBrowserUpdate(window,m.generation,m.changedAt,m.pending?1:0,1,m.left,m.top,m.right,m.bottom);
+            } else if(m!=null && cls.ToString()=="MozillaWindowClass")NfBrowserUpdate(window,m.generation,m.changedAt,m.pending?1:0,0,0,0,0,0);
         }
 
+        static bool IsFirefox(IntPtr window) {var cls=new StringBuilder(128);GetClassName(window,cls,cls.Capacity);return cls.ToString()=="MozillaWindowClass";}
         IntPtr FindBrowser(string title) {
             if (cachedWindow != IntPtr.Zero && IsWindowVisible(cachedWindow)) {
                 var cachedTitle = new StringBuilder(1024);

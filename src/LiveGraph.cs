@@ -2,18 +2,37 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
+using System.Text;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 namespace NocnyFiltr {
     internal sealed class LiveGraph : Control {
         readonly GraphHistory history = new GraphHistory();
-        readonly Stopwatch clock = Stopwatch.StartNew();
+        ulong sequence;
+        readonly StringBuilder pending = new StringBuilder(65536);
+        static double Now {get {return (double)Stopwatch.GetTimestamp()/Stopwatch.Frequency;}}
         internal bool Frozen { get { return history.Frozen; } set { history.Frozen = value; } }
         internal LiveGraph() { DoubleBuffered=true; BackColor=Theme.Card; ForeColor=Theme.Muted; Font=Theme.Font(8,FontStyle.Regular); }
         internal void Clear() { history.Clear(); Invalidate(); }
         internal void Observe(string report, bool active) {
             if (Frozen) return;
-            history.Observe(WindowReport.ActiveReading(report), active, clock.Elapsed.TotalSeconds);
+            history.Observe(WindowReport.ActiveReading(report), active, Now);
+            Invalidate();
+        }
+        internal void ReadNative(bool active) {
+            if(Frozen)return;
+            pending.Clear();Native.NfGraphRead(sequence,pending,pending.Capacity);
+            foreach(string row in pending.ToString().Split(new[]{'\n'},StringSplitOptions.RemoveEmptyEntries)) {
+                string[] fields=row.Split(new[]{'\t'},4);ulong next;double time;int kind;
+                if(fields.Length<4 || !ulong.TryParse(fields[0],out next) ||
+                    !double.TryParse(fields[1],NumberStyles.Float,CultureInfo.InvariantCulture,out time) ||
+                    !int.TryParse(fields[2],out kind))continue;
+                if(next<=sequence)continue;sequence=next;
+                if(kind==1)history.MarkContext(time);
+                else history.Observe(WindowReport.ActiveReading(fields[3]),active,time,false);
+            }
+            if(!active)history.Observe(null,false,Now,false);
             Invalidate();
         }
         protected override void OnPaint(PaintEventArgs e) {
@@ -29,9 +48,14 @@ namespace NocnyFiltr {
                 g.DrawString("−10 s",Font,text,plot.Left,plot.Bottom+2*scale);
                 g.DrawString("now",Font,text,plot.Right-26*scale,plot.Bottom+2*scale);
             }
-            double end=samples.Count>0?samples[samples.Count-1].Time:clock.Elapsed.TotalSeconds;
+            double end=samples.Count>0?samples[samples.Count-1].Time:Now;
             using(var boundary=new Pen(Color.FromArgb(150,160,180),scale)) {
                 boundary.DashStyle=DashStyle.Dash;
+                foreach(double time in history.Boundaries) {
+                    if(time>end || time<end-10)continue;
+                    float x=plot.Right-(float)(end-time)/10*plot.Width;
+                    g.DrawLine(boundary,x,plot.Top,x,plot.Bottom);
+                }
                 foreach(var s in samples) if(s.ContextChanged) {
                     float x=plot.Right-(float)(end-s.Time)/10*plot.Width;
                     g.DrawLine(boundary,x,plot.Top,x,plot.Bottom);

@@ -5,7 +5,7 @@ async function run(rect, hidden=false) {
   const video={closest:()=>null,getBoundingClientRect:()=>rect,contains:x=>x===video};
   const context={WeakMap,Number,Math,performance:{now:()=>1000},document:{hidden,querySelectorAll:()=>[video],elementFromPoint:()=>video,addEventListener(){}},
     getComputedStyle:()=>({visibility:'visible',display:'block',opacity:'1'}),innerWidth:800,innerHeight:600,devicePixelRatio:2.5,
-    window:{mozInnerScreenX:10,mozInnerScreenY:100},browser:{runtime:{sendMessage:async m=>sent.push(m)}},setInterval(){},addEventListener(){}};
+    window:{mozInnerScreenX:10,mozInnerScreenY:100},browser:{runtime:{onMessage:{addListener(){},removeListener(){}},sendMessage:async m=>sent.push(m)}},setInterval(){},addEventListener(){}};
   vm.runInNewContext(code,context);await new Promise(resolve=>setImmediate(resolve));return sent;
 }
 (async()=>{

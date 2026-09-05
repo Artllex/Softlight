@@ -1,9 +1,11 @@
 (() => {
   if (window.__softlightCleanup) window.__softlightCleanup();
   const ids = new WeakMap(); let nextId = 1, pending = false, scheduled = 0;
+  let refreshAgain = false;
   let lastPayload = '', lastSent = 0, scanTime = -Infinity, videos = [];
   async function update() {
-    if (pending || document.hidden) return;
+    if (document.hidden) return;
+    if(pending) {refreshAgain=true;return;}
     pending = true;
     try {
       let chosen = null, area = 0;
@@ -36,17 +38,21 @@
         await browser.runtime.sendMessage(message);
         lastPayload=payload;lastSent=now;
       }
-    } catch {} finally { pending = false; }
+    } catch {} finally { pending = false;if(refreshAgain){refreshAgain=false;update();} }
   }
   function schedule() { if(!scheduled) scheduled=requestAnimationFrame(() => {scheduled=0;update();}); }
+  function visibilityChanged() {lastPayload='';scanTime=-Infinity;update();}
+  function requested(message) {if(message && message.softlight==='refresh')visibilityChanged();}
+  browser.runtime.onMessage.addListener(requested);
   const timer=setInterval(update, 100);
   addEventListener('scroll', schedule, {capture:true,passive:true});
   addEventListener('resize', schedule);
-  document.addEventListener('visibilitychange', schedule);
+  document.addEventListener('visibilitychange', visibilityChanged);
   window.__softlightCleanup=() => {
     clearInterval(timer);cancelAnimationFrame(scheduled);
+    browser.runtime.onMessage.removeListener(requested);
     removeEventListener('scroll',schedule,true);removeEventListener('resize',schedule);
-    document.removeEventListener('visibilitychange',schedule);
+    document.removeEventListener('visibilitychange',visibilityChanged);
   };
   update();
 })();

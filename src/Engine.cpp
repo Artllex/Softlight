@@ -2,6 +2,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi1_6.h>
 #include <dcomp.h>
 #include <dwmapi.h>
@@ -15,10 +16,13 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <deque>
 #include <string>
 #include <DirectXPackedVector.h>
 #include "VertexShader.h"
 #include "PixelShader.h"
+#include "PipelineTrace.h"
+#include "GraphTimeline.h"
 using Microsoft::WRL::ComPtr;
 
 struct Settings {
@@ -87,6 +91,7 @@ static LRESULT CALLBACK OverlayProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
 struct Pipeline {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
+    ComPtr<ID3D11DeviceContext1> clearContext;
     ComPtr<ID3D11VertexShader> vs;
     ComPtr<ID3D11PixelShader> ps;
     ComPtr<ID3D11Buffer> constants;
@@ -96,6 +101,7 @@ struct Pipeline {
         Check(D3D11CreateDevice(adapter, warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_UNKNOWN,
             nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION,
             &device, nullptr, &context));
+        context.As(&clearContext);
         Check(device->CreateVertexShader(vertexShader, sizeof(vertexShader), nullptr, &vs));
         Check(device->CreatePixelShader(pixelShader, sizeof(pixelShader), nullptr, &ps));
         D3D11_BUFFER_DESC bd{}; bd.ByteWidth = sizeof(Settings); bd.Usage = D3D11_USAGE_DEFAULT;
@@ -105,6 +111,16 @@ struct Pipeline {
         sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
         Check(device->CreateSamplerState(&sd, &sampler));
+    }
+    void DrawMask(ID3D11ShaderResourceView* input,ID3D11RenderTargetView* target,UINT width,UINT height,const Settings& s) {
+        if(!clearContext) {Draw(input,target,width,height,s);return;}
+        float color[4]{};context->ClearRenderTargetView(target,color);
+        // ClearView clips rectangle bounds to the target; reverse Z order means
+        // foreground regions (including transparent occluders) win exactly once.
+        for(int i=int(s.regionCount)-1;i>=0;--i) {
+            RECT r{LONG(s.regions[i][0]),LONG(s.regions[i][1]),LONG(s.regions[i][2]),LONG(s.regions[i][3])};
+            color[3]=s.gains[i][0];clearContext->ClearView(target,color,&r,1);
+        }
     }
     void Draw(ID3D11ShaderResourceView* input, ID3D11RenderTargetView* target,
               UINT width, UINT height, const Settings& s) {
@@ -133,6 +149,7 @@ struct Monitor {
     ComPtr<ID3D11Texture2D> source;
     ComPtr<ID3D11ShaderResourceView> sourceView;
     ComPtr<ID3D11RenderTargetView> target;
+
     ComPtr<IDCompositionDevice> composition;
     ComPtr<IDCompositionTarget> compositionTarget;
     ComPtr<IDCompositionVisual> visual;
@@ -140,6 +157,7 @@ struct Monitor {
     DXGI_OUTPUT_DESC desc{};
     UINT width = 0, height = 0;
     bool hasFrame = false;
+    double captureTime=0;
     bool hdr = false;
     float whiteLevel = 1;
     ULONGLONG whiteChecked = 0;
@@ -177,6 +195,10 @@ struct Monitor {
         if (desc.Rotation == DXGI_MODE_ROTATION_ROTATE90) { sx = y; sy = width - 1 - x; }
         if (desc.Rotation == DXGI_MODE_ROTATION_ROTATE180) { sx = width - 1 - x; sy = height - 1 - y; }
         if (desc.Rotation == DXGI_MODE_ROTATION_ROTATE270) { sx = height - 1 - y; sy = x; }
+        // After a flip, the render target is the next back buffer. It can retain
+        // an older mask now that unchanged masks no longer get repainted.
+        // Recreate the submitted mask there for this explicit diagnostic only.
+        gpu.DrawMask(sourceView.Get(),target.Get(),width,height,previous);
         probeInput = ReadPixel(source.Get(), sx, sy);
         ComPtr<ID3D11Resource> targetResource; target->GetResource(&targetResource);
         ComPtr<ID3D11Texture2D> targetTexture; Check(targetResource.As(&targetTexture));
@@ -279,6 +301,7 @@ struct Monitor {
         s.previewRect[3] -= desc.DesktopCoordinates.top;
         DXGI_OUTDUPL_FRAME_INFO info{};
         ComPtr<IDXGIResource> resource;
+        double acquireStart=PipelineTrace::Milliseconds();
         HRESULT hr = duplication->AcquireNextFrame(monitorCount.load() == 1 ? 8 : 0, &info, &resource);
         bool changed = false;
         if (hr != DXGI_ERROR_WAIT_TIMEOUT) {
@@ -295,19 +318,26 @@ struct Monitor {
                         Check(gpu.device->CreateShaderResourceView(source.Get(), nullptr, &sourceView));
                     }
                     gpu.context->CopyResource(source.Get(), captured.Get());
+                    LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);
+                    captureTime=info.LastPresentTime.QuadPart?double(info.LastPresentTime.QuadPart)/double(frequency.QuadPart):GraphTimeline::Clock();
                     hasFrame = changed = true;
                 }
             } catch (...) { duplication->ReleaseFrame(); throw; }
             Check(duplication->ReleaseFrame());
         }
-        if (hasFrame) analyzer.Update(gpu, sourceView.Get(), width, height, desc.DesktopCoordinates, s, changed);
-        if (hasFrame && (changed || memcmp(&s, &previous, sizeof(s)) != 0 || !IsWindowVisible(window))) {
-            gpu.Draw(sourceView.Get(), target.Get(), width, height, s);
+        PipelineTrace::Mark(1,0,changed?1:0,PipelineTrace::Milliseconds()-acquireStart,(GraphTimeline::Clock()-captureTime)*1000);
+        double analysisStart=PipelineTrace::Milliseconds();
+        if (hasFrame) analyzer.Update(gpu, sourceView.Get(), width, height, desc.DesktopCoordinates, s, changed,captureTime);
+        double analysisEnd=PipelineTrace::Milliseconds();
+        if (hasFrame && (memcmp(&s, &previous, sizeof(s)) != 0 || !IsWindowVisible(window))) {
+            gpu.DrawMask(sourceView.Get(),target.Get(),width,height,s);
             Check(swapchain->Present(0, 0));
+            PipelineTrace::Mark(3,0,analysisEnd-analysisStart,PipelineTrace::Milliseconds()-analysisEnd);
             previous = s;
             ++frames;
             if (enabled && !stopping && !IsWindowVisible(window)) ShowWindow(window, SW_SHOWNOACTIVATE);
         }
+        if(hasFrame)analyzer.Publish();
         // Taskbar flyouts and other topmost windows can otherwise escape the mask.
         if (hasFrame && enabled && GetTickCount64() - zOrderTime > 1000) {
             SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -394,6 +424,7 @@ static void Worker() {
 API int __cdecl NfStart() {
     if (worker.joinable()) return 1;
     stopping = false; enabled = false;
+    PipelineTrace::Start();
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         reinterpret_cast<LPCWSTR>(&NfStart), &module);
     try { worker = std::thread(Worker); return 1; } catch (...) { return 0; }
@@ -431,6 +462,7 @@ API void __cdecl NfGetStatus(Status* result) {
 API void __cdecl NfStop() {
     stopping = true; enabled = false; HideAll();
     if (worker.joinable()) worker.join();
+    PipelineTrace::Save();
 }
 
 // Executes the exact compiled production shader against a synthetic texture.
@@ -452,7 +484,8 @@ API int __cdecl NfTestShader(float t, float s, int curve, int rotate, int width,
         ComPtr<ID3D11RenderTargetView> rtv; Check(p.device->CreateRenderTargetView(output.Get(), nullptr, &rtv));
         Settings params{t, s, float(curve), float(rotate)};
         if(curve==9) {params.mode=1;params.regionCount=2;params.regions[0][2]=float(d.Width/4);params.regions[0][3]=float(d.Height);params.regions[1][2]=float(d.Width);params.regions[1][3]=float(d.Height);params.gains[1][0]=s;}
-        p.Draw(srv.Get(), rtv.Get(), d.Width, d.Height, params);
+        if(curve==9)p.DrawMask(srv.Get(),rtv.Get(),d.Width,d.Height,params);
+        else p.Draw(srv.Get(), rtv.Get(), d.Width, d.Height, params);
         d.Usage = D3D11_USAGE_STAGING; d.BindFlags = 0; d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         ComPtr<ID3D11Texture2D> staging; Check(p.device->CreateTexture2D(&d, nullptr, &staging));
         p.context->CopyResource(staging.Get(), output.Get());
@@ -487,7 +520,27 @@ API int __cdecl NfTestHdrShader(float t, float s, int curve, float white, int co
     } catch(HRESULT hr) { return int(hr); } catch(...) { return int(E_UNEXPECTED); }
 }
 
+API void __cdecl NfTraceMark(int stage,int generation,double a,double b,double c) {PipelineTrace::Mark(stage,generation,a,b,c);}
 API void __cdecl NfWindowReport(wchar_t* buffer, int length) { if(!buffer || length<1) return; std::lock_guard<std::mutex> lock(reportMutex); wcsncpy_s(buffer,length,windowReport.c_str(),_TRUNCATE); }
+API void __cdecl NfGraphRead(unsigned long long after,wchar_t* buffer,int length) {GraphTimeline::Read(after,buffer,length);}
+API void __cdecl NfBrowserUpdate(HWND window,int generation,double changedAt,int pending,int visible,int left,int top,int right,int bottom) {
+    if(!window)return;
+    std::lock_guard<std::mutex> lock(playerMutex);
+    for(auto i=browserContexts.begin();i!=browserContexts.end();) {if(!IsWindow(i->first)){announcedContexts.erase(i->first);i=browserContexts.erase(i);}else ++i;}
+    const auto old=announcedContexts.find(window);
+    if(old==announcedContexts.end() || old->second!=generation)GraphTimeline::Boundary(window,GraphTimeline::EventTime(changedAt));
+    announcedContexts[window]=generation;
+    if(pending)return; // Keep the previous mask until this tab's geometry is known.
+    bool contextChanged=browserContexts[window]!=generation;
+    bool changed=contextChanged || playerWindow!=(visible?window:nullptr) ||
+        playerRect.left!=left || playerRect.top!=top || playerRect.right!=right || playerRect.bottom!=bottom;
+    if(browserHistory.empty())RememberBrowser(0);
+    browserContexts[window]=generation;
+    playerWindow=visible?window:nullptr;playerRect={left,top,right,bottom};playerSeen=GetTickCount64();
+    playerGeneration=unsigned(generation);
+    if(visible)GetWindowRect(window,&playerWindowRect);
+    if(changed)RememberBrowser(contextChanged?GraphTimeline::EventTime(changedAt):GraphTimeline::Clock());
+}
 API void __cdecl NfBrowserContext(HWND window,int generation) {
     std::lock_guard<std::mutex> lock(playerMutex);
     for(auto i=browserContexts.begin();i!=browserContexts.end();) {if(!IsWindow(i->first))i=browserContexts.erase(i);else ++i;}

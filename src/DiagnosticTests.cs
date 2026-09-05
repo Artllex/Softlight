@@ -35,6 +35,13 @@ namespace NocnyFiltr {
                 Check(float.IsNaN(history.Samples[3].Brightness),"Missing data creates a gap");
                 history.Clear();history.Observe(a,true,11);
                 Check(history.Samples.Count==1 && !history.Samples[0].ContextChanged,"Clear resets context");
+                history.Clear();
+                history.Observe(a,true,20,false);history.Observe(b,true,20.008,false);
+                history.MarkContext(20.003); // delivered after both measurements
+                Check(history.Boundaries.Count==1 && history.Boundaries[0]==20.003,"Late boundary keeps original event time");
+                Check(history.Samples.Count==2 && !history.Samples[1].ContextChanged && history.Samples[1].Time==20.008,"Samples keep native timing, no duplicate context boundary");
+                history.Frozen=true;history.MarkContext(21);Check(history.Boundaries.Count==1,"Freeze retains boundaries");
+                history.Frozen=false;history.Observe(a,true,31,false);Check(history.Boundaries.Count==0,"Boundary retention");
             } finally {Thread.CurrentThread.CurrentCulture=culture;}
         }
     }
