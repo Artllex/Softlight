@@ -109,6 +109,8 @@ namespace NocnyFiltr {
         internal static int Run(string path) {
             List<string> report = new List<string>();
             try {
+                DiagnosticTests.Run();
+                report.Add("PASS: shared report parsing, culture independence, active contexts, history boundaries, retention and Freeze.");
                 Require(Native.NfTestResponse()==0,"Response speed, frame independence or step overshoot");
                 report.Add("PASS: 20,000 bounded jitter samples, larger correction accepted, immediate bright attack with smooth release, speed defaults, five frequencies; fast transitions at 30/60/120 fps; standard/high analysis scheduling after a brightness cut; smooth response in both modes.");
                 double[] thresholds = {0, .1, .45, .8, .95};

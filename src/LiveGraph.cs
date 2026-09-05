@@ -6,48 +6,18 @@ using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 namespace NocnyFiltr {
     internal sealed class LiveGraph : Control {
-        struct Sample { internal double Time; internal float Brightness,Dim; internal bool ContextChanged; }
-        readonly List<Sample> samples=new List<Sample>();
-        readonly Stopwatch clock=Stopwatch.StartNew();
-        internal bool Frozen;
-
-
-        string source="";
-        string latest="Waiting for player";
-        internal LiveGraph() {DoubleBuffered=true;BackColor=Theme.Card;ForeColor=Theme.Muted;Font=Theme.Font(8,FontStyle.Regular);}
-        internal void Clear() {samples.Clear();source="";latest="Waiting for measurement";Invalidate();}
-        internal void Observe(string report,bool active) {
-            if(Frozen)return;
-            float brightness=float.NaN,dim=float.NaN;
-            string chosen=null;
-            if(active) foreach(string line in report.Split('\n')) {
-                if(line.TrimEnd().EndsWith("\tactive")) {chosen=line;break;}
-            }
-            string[] parts=chosen==null?new string[0]:chosen.TrimEnd().Split('\t');
-            string nextSource=parts.Length>=3?parts[2]:"";
-            string label="Active window";
-            if(parts.Length>0) {
-                int percent=parts[0].IndexOf('%');
-                if(percent>=0)label=parts[0].Substring(percent+1).Trim();
-                if(label=="Firefox video")label="Player";
-                else if(label.StartsWith("Firefox page:"))label="Page";
-                if(label.Length>22)label=label.Substring(0,21)+"…";
-            }
-            bool changed=samples.Count>0 && source!=nextSource;
-            source=nextSource;
-            if(chosen!=null) {
-                string[] fields=chosen.Split('\t');int percent=fields[0].IndexOf('%');float b,d;
-                if(fields.Length>=2 && percent>0 && float.TryParse(fields[1].Trim(),out b) && float.TryParse(fields[0].Substring(0,percent),out d)) {brightness=b;dim=d;}
-            }
-            double now=clock.Elapsed.TotalSeconds;
-            samples.Add(new Sample {Time=now,Brightness=brightness,Dim=dim,ContextChanged=changed});
-            samples.RemoveAll(s=>s.Time<now-10);
-            latest=float.IsNaN(brightness)?(active?"No visible active window":"Filter paused"):
-                label+" · Brightness "+brightness.ToString("0")+"%    Dim "+dim.ToString("0")+"%";
+        readonly GraphHistory history = new GraphHistory();
+        readonly Stopwatch clock = Stopwatch.StartNew();
+        internal bool Frozen { get { return history.Frozen; } set { history.Frozen = value; } }
+        internal LiveGraph() { DoubleBuffered=true; BackColor=Theme.Card; ForeColor=Theme.Muted; Font=Theme.Font(8,FontStyle.Regular); }
+        internal void Clear() { history.Clear(); Invalidate(); }
+        internal void Observe(string report, bool active) {
+            if (Frozen) return;
+            history.Observe(WindowReport.ActiveReading(report), active, clock.Elapsed.TotalSeconds);
             Invalidate();
         }
         protected override void OnPaint(PaintEventArgs e) {
-            base.OnPaint(e);var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
+            base.OnPaint(e);var samples=history.Samples;var latest=history.Latest;var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
             float scale=g.DpiX/96f;
             var plot=new RectangleF(30*scale,26*scale,Math.Max(1,Width-40*scale),Math.Max(1,Height-46*scale));
             float ceiling=100;foreach(var s in samples)if(!float.IsNaN(s.Brightness))ceiling=Math.Max(ceiling,(float)Math.Ceiling(s.Brightness/100)*100);

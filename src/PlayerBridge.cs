@@ -37,42 +37,55 @@ namespace NocnyFiltr {
                         byte[] bytes=reader.ReadBytes(length);if(bytes.Length!=length)continue;
                         var json=new JavaScriptSerializer {MaxJsonLength=4096,RecursionLimit=8};
                         Message m=json.Deserialize<Message>(Encoding.UTF8.GetString(bytes));
-                        LastSeen=DateTime.UtcNow;
-                        LastMessage=m==null?"empty":("visible="+m.visible+" rect="+m.left+","+m.top+","+m.right+","+m.bottom);
-                        IntPtr window=Native.GetForegroundWindow();var cls=new StringBuilder(128);GetClassName(window,cls,cls.Capacity);
-                        var caption=new StringBuilder(1024);GetWindowText(window,caption,caption.Capacity);
-                        if(m!=null && m.visible && string.IsNullOrEmpty(m.title))continue;
-                        if(m!=null && !string.IsNullOrEmpty(m.title)) {
-                            if(string.IsNullOrEmpty(m.title))continue;
-                            IntPtr match=IntPtr.Zero;int matches=0;
-                            var cachedTitle=new StringBuilder(1024);
-                            if(cachedWindow!=IntPtr.Zero && IsWindowVisible(cachedWindow)) {
-                                GetWindowText(cachedWindow,cachedTitle,cachedTitle.Capacity);
-                                if(cachedTitle.ToString().StartsWith(m.title,StringComparison.Ordinal)) {match=cachedWindow;matches=1;}
-                            }
-                            if(matches==0)
-                            EnumWindows(delegate(IntPtr candidate,IntPtr arg) {
-                                var name=new StringBuilder(1024);var kind=new StringBuilder(128);
-                                GetClassName(candidate,kind,kind.Capacity);
-                                if(kind.ToString()!="MozillaWindowClass" || !IsWindowVisible(candidate))return true;
-                                GetWindowText(candidate,name,name.Capacity);
-                                if(IsWindowVisible(candidate) && kind.ToString()=="MozillaWindowClass" && name.ToString().StartsWith(m.title,StringComparison.Ordinal)) {match=candidate;matches++;}
-                                return true;
-                            },IntPtr.Zero);
-                            if(matches!=1)continue;
-                            cachedWindow=window=match;GetClassName(window,cls,cls.Capacity);
-                            NfBrowserContext(window,m.generation);
-                        }
-                        Bounds b;
-                        if(m!=null && m.visible && cls.ToString()=="MozillaWindowClass" && GetWindowRect(window,out b) &&
-                            m.left>=b.Left && m.top>=b.Top && m.right<=b.Right && m.bottom<=b.Bottom &&
-                            (long)m.right-m.left>=32 && (long)m.bottom-m.top>=24) {
-                            NfPlayer(window,m.left,m.top,m.right,m.bottom,m.generation);
-                        } else NfPlayer(IntPtr.Zero,0,0,0,0,0);
+                        ProcessMessage(m);
                     }
                 }
             } catch(Exception ex) { LastMessage=ex.Message; if(!stopping)Thread.Sleep(50); }
         }
+        void ProcessMessage(Message m) {
+            LastSeen=DateTime.UtcNow;
+            LastMessage=m==null?"empty":("visible="+m.visible+" rect="+m.left+","+m.top+","+m.right+","+m.bottom);
+            IntPtr window=Native.GetForegroundWindow();var cls=new StringBuilder(128);GetClassName(window,cls,cls.Capacity);
+            if(m!=null && m.visible && string.IsNullOrEmpty(m.title))return;
+            if(m!=null && !string.IsNullOrEmpty(m.title)) {
+                IntPtr match=FindBrowser(m.title);
+                if(match==IntPtr.Zero)return;
+                cachedWindow=window=match;GetClassName(window,cls,cls.Capacity);
+                NfBrowserContext(window,m.generation);
+            }
+            Bounds b;
+            if(m!=null && m.visible && cls.ToString()=="MozillaWindowClass" && GetWindowRect(window,out b) &&
+                m.left>=b.Left && m.top>=b.Top && m.right<=b.Right && m.bottom<=b.Bottom &&
+                (long)m.right-m.left>=32 && (long)m.bottom-m.top>=24) {
+                NfPlayer(window,m.left,m.top,m.right,m.bottom,m.generation);
+            } else NfPlayer(IntPtr.Zero,0,0,0,0,0);
+        }
+
+        IntPtr FindBrowser(string title) {
+            if (cachedWindow != IntPtr.Zero && IsWindowVisible(cachedWindow)) {
+                var cachedTitle = new StringBuilder(1024);
+                GetWindowText(cachedWindow, cachedTitle, cachedTitle.Capacity);
+                if (cachedTitle.ToString().StartsWith(title, StringComparison.Ordinal)) return cachedWindow;
+            }
+
+            IntPtr match = IntPtr.Zero;
+            int matches = 0;
+            EnumWindows(delegate(IntPtr candidate, IntPtr arg) {
+                var kind = new StringBuilder(128);
+                GetClassName(candidate, kind, kind.Capacity);
+                if (kind.ToString() != "MozillaWindowClass" || !IsWindowVisible(candidate)) return true;
+                var name = new StringBuilder(1024);
+                GetWindowText(candidate, name, name.Capacity);
+                if (name.ToString().StartsWith(title, StringComparison.Ordinal)) {
+                    match = candidate;
+                    matches++;
+                }
+                return true;
+            }, IntPtr.Zero);
+            // Ambiguous browser titles must never place a mask on a guessed window.
+            return matches == 1 ? match : IntPtr.Zero;
+        }
+
         public void Dispose() { stopping=true;try {if(server!=null)server.Dispose();}catch{} if(worker!=null)worker.Join(500);NfPlayer(IntPtr.Zero,0,0,0,0,0); }
     }
 }

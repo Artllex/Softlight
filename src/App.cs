@@ -9,171 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace NocnyFiltr {
-    internal static class Program {
-        internal const string Title = "Nocny Filtr";
-        internal static readonly uint ShowMessage = Native.RegisterWindowMessage("NocnyFiltr.Show.v1");
-        internal static readonly uint ExitMessage = Native.RegisterWindowMessage("NocnyFiltr.Exit.v1");
-        [STAThread]
-        static int Main(string[] args) {
-            try { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            if (args.Length > 0 && args[0] == "--firefox-check") return SelfTests.FirefoxCheck(args[1]);
-            if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : "self-test.txt");
-            if (args.Length > 0 && args[0] == "--interface-check") return SelfTests.InterfaceCheck(args[1]);
-            if (args.Length > 0 && args[0] == "--render-menu") {
-                using(MainForm f=new MainForm(true)) { f.Show(); Application.DoEvents(); f.RenderMenu(args[1]); } return 0;
-            }
-            if (args.Length > 0 && args[0] == "--render-ui") {
-                using (MainForm f = new MainForm(true)) {
-                    f.Show(); Application.DoEvents();
-                    if(Array.IndexOf(args,"--graph")>=0) {f.ToggleGraph();Application.DoEvents();}
-                    using (Bitmap b = new Bitmap(f.Width, f.Height)) { f.DrawToBitmap(b, new Rectangle(Point.Empty, f.Size)); b.Save(args[1], ImageFormat.Png); }
-                }
-                return 0;
-            }
-            if (args.Length > 0 && args[0] == "--smoke-test") return SelfTests.WindowSmoke(args[1]);
-            if (args.Length > 0 && args[0] == "--motion-test") return SelfTests.Motion(args[1]);
-            if (args.Length > 0 && args[0] == "--exit") {
-                Native.PostMessage(Native.FindWindow(null, Title), ExitMessage, IntPtr.Zero, IntPtr.Zero); return 0;
-            }
-            bool created;
-            using (Mutex mutex = new Mutex(true, @"Local\NocnyFiltr.v1", out created)) {
-                if (!created) { Native.PostMessage(Native.FindWindow(null, Title), ShowMessage, IntPtr.Zero, IntPtr.Zero); return 0; }
-                try {
-                    Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-                    using (MainForm f = new MainForm(false)) {
-                        f.StartHidden = Array.IndexOf(args, "--tray") >= 0;
-                        if (Array.IndexOf(args, "--paused") >= 0) f.Pause();
-                        Application.Run(f);
-                    }
-                    return 0;
-                } catch (Exception e) {
-                    try { Native.NfEnable(0); } catch { }
-                    MessageBox.Show("Could not start Softlight.\n\n" + e.Message, "Softlight", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return 1;
-                } finally { try { Native.NfStop(); } catch { } }
-            }
-        }
-    }
-    internal static class Theme {
-        internal static Color Background = Color.FromArgb(19, 22, 28), Card = Color.FromArgb(28, 33, 41);
-        internal static Color Text = Color.FromArgb(213, 219, 230), Muted = Color.FromArgb(143, 155, 172);
-        internal static Color Accent = Color.FromArgb(116, 202, 177), Border = Color.FromArgb(47, 56, 69);
-        internal static Font Font(float size, FontStyle style) { return new Font("Segoe UI", size, style); }
-    }
-    internal sealed class RoundedPanel : Panel {
-        internal RoundedPanel() {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-        }
-        protected override void OnPaintBackground(PaintEventArgs e) {
-            PaintSurface(this, e, BackColor);
-        }
-        internal static void PaintSurface(Control control, PaintEventArgs e, Color color) {
-            int Width = control.Width, Height = control.Height;
-            e.Graphics.Clear(control.Parent == null ? Theme.Background : control.Parent.BackColor);
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            float d = Math.Min(12f * e.Graphics.DpiX / 96f, Math.Min(Width, Height) - 1f);
-            if (d <= 0) return;
-            using (GraphicsPath path = new GraphicsPath()) {
-                path.AddArc(0, 0, d, d, 180, 90);
-                path.AddArc(Width - 1 - d, 0, d, d, 270, 90);
-                path.AddArc(Width - 1 - d, Height - 1 - d, d, d, 0, 90);
-                path.AddArc(0, Height - 1 - d, d, d, 90, 90);
-                path.CloseFigure();
-                using (SolidBrush brush = new SolidBrush(color)) e.Graphics.FillPath(brush, path);
-            }
-        }
-    }
-    internal sealed class DarkButton : Button {
-        internal bool Selected;
-        internal DarkButton() {
-            FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
-            BackColor = Theme.Border; ForeColor = Theme.Text;
-            Font = Theme.Font(10, FontStyle.Regular); Cursor = Cursors.Hand;
-        }
-        protected override void OnPaint(PaintEventArgs e) {
-            Color bg = Selected ? Theme.Accent : (ClientRectangle.Contains(PointToClient(Cursor.Position)) ? Color.FromArgb(58, 69, 83) : Theme.Border);
-            RoundedPanel.PaintSurface(this, e, bg);
-            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, Selected ? Theme.Background : Theme.Text,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4));
-        }
-    }
-    internal sealed class Slider : Control {
-        int value; internal int Maximum=95; internal bool CenterMark=false;
-        internal event EventHandler ValueChanged;
-        internal int Value {
-            get { return value; }
-            set { int next = Math.Max(0, Math.Min(Maximum, value)); if (this.value == next) return; this.value = next; Invalidate(); if (ValueChanged != null) ValueChanged(this, EventArgs.Empty); }
-        }
-        internal Slider() {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true);
-            TabStop = true; Cursor = Cursors.Hand; AccessibleRole = AccessibleRole.Slider; BackColor = Theme.Card;
-        }
-        protected override void OnPaint(PaintEventArgs e) {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            float scale = Height / 35f;
-            float left = 12 * scale, right = Width - left, y = Height / 2f, x = left + (right - left) * Value / (float)Maximum;
-            using (Pen p = new Pen(Theme.Border, 5 * scale)) { p.StartCap = p.EndCap = LineCap.Round; e.Graphics.DrawLine(p, left, y, right, y); }
-            using (Pen p = new Pen(Theme.Accent, 5 * scale)) { p.StartCap = p.EndCap = LineCap.Round; e.Graphics.DrawLine(p, left, y, x, y); }
-            using (SolidBrush b = new SolidBrush(Theme.Accent)) e.Graphics.FillEllipse(b, x - 8*scale, y - 8*scale, 16*scale, 16*scale);
-            if(CenterMark) using(Pen mark=new Pen(Theme.Muted)) e.Graphics.DrawLine(mark,(left+right)/2,y-7*scale,(left+right)/2,y+7*scale);
-            if (Focused) using (Pen p = new Pen(Theme.Text)) e.Graphics.DrawEllipse(p, x - 11*scale, y - 11*scale, 22*scale, 22*scale);
-        }
-        void FromMouse(int x) { double margin = 12 * Height / 35.0; Value = (int)Math.Round((x - margin) * Maximum / Math.Max(1, Width - margin*2)); }
-        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (e.Button == MouseButtons.Left) { Focus(); Capture = true; FromMouse(e.X); } }
-        protected override void OnMouseMove(MouseEventArgs e) { if (Capture) FromMouse(e.X); base.OnMouseMove(e); }
-        protected override void OnMouseUp(MouseEventArgs e) { Capture = false; base.OnMouseUp(e); }
-        protected override bool IsInputKey(Keys keyData) { Keys k = keyData & Keys.KeyCode; return k == Keys.Left || k == Keys.Right || k == Keys.Up || k == Keys.Down || k == Keys.Home || k == Keys.End || base.IsInputKey(keyData); }
-        protected override void OnKeyDown(KeyEventArgs e) {
-            if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Down) Value -= e.Shift ? 5 : 1;
-            if (e.KeyCode == Keys.Right || e.KeyCode == Keys.Up) Value += e.Shift ? 5 : 1;
-            if (e.KeyCode == Keys.Home) Value = 0; if (e.KeyCode == Keys.End) Value = Maximum;
-            base.OnKeyDown(e);
-        }
-        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
-        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
-    }
-    internal sealed class Preview : Control {
-        internal Settings Settings;
-        internal Preview(Settings s) { Settings = s; DoubleBuffered = true; BackColor = Theme.Card; }
-        protected override void OnPaint(PaintEventArgs e) {
-            Graphics g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-            float scale = Width / 496f;
-            g.ScaleTransform(scale, scale);
-            float w = Width / scale;
-            RectangleF plot = new RectangleF(34, 14, w - 55, 114);
-            using (Pen grid = new Pen(Theme.Border)) {
-                for (int i = 0; i <= 4; i++) {
-                    float x = plot.Left + i * plot.Width / 4, y = plot.Top + i * plot.Height / 4;
-                    g.DrawLine(grid, x, plot.Top, x, plot.Bottom); g.DrawLine(grid, plot.Left, y, plot.Right, y);
-                }
-            }
-            double t = Settings.Threshold / 100.0, s = Settings.Strength / 100.0;
-            using (Pen p = new Pen(Theme.Muted, 1)) { p.DashStyle = DashStyle.Dash; g.DrawLine(p, plot.Left, plot.Bottom, plot.Right, plot.Top); }
-            float tx = plot.Left + (float)t * plot.Width;
-            using (Pen p = new Pen(Color.FromArgb(100, Theme.Accent))) { p.DashStyle = DashStyle.Dash; g.DrawLine(p, tx, plot.Top, tx, plot.Bottom); }
-            PointF[] pts = new PointF[201];
-            for (int i = 0; i <= 200; i++) pts[i] = new PointF(plot.Left + i / 200f * plot.Width,
-                plot.Bottom - (float)Tone.Map(i / 200.0, t, s, Settings.Curve) * plot.Height);
-            using (Pen p = new Pen(Theme.Accent, 2.5f)) g.DrawLines(p, pts);
-            using (Font font = new Font("Segoe UI", 10.67f, FontStyle.Regular, GraphicsUnit.Pixel)) using (SolidBrush b = new SolidBrush(Theme.Muted)) {
-                g.DrawString("100", font, b, 1, plot.Top - 4); g.DrawString("0", font, b, 19, plot.Bottom - 8);
-                g.DrawString(Language.Text("ciemne",Settings.Language), font, b, plot.Left, plot.Bottom + 4);
-                g.DrawString(Language.Text("jasne →",Settings.Language), font, b, plot.Right - 51, plot.Bottom + 4);
-                g.DrawString(Language.Text("PRZED",Settings.Language), font, b, 3, 161); g.DrawString(Language.Text("PO",Settings.Language), font, b, 3, 189);
-            }
-            Color[] colors = {Color.FromArgb(18, 21, 28), Color.FromArgb(49, 54, 63), Color.FromArgb(100, 106, 117), Color.FromArgb(165, 170, 179), Color.FromArgb(216, 222, 231), Color.White, Color.FromArgb(248, 212, 129), Color.FromArgb(146, 223, 244)};
-            float sw = (w - 61) / colors.Length;
-            for (int i = 0; i < colors.Length; ++i) {
-                using (SolidBrush b = new SolidBrush(colors[i])) g.FillRectangle(b, 57 + i * sw, 158, sw - 4, 22);
-                using (SolidBrush b = new SolidBrush(Tone.MapColor(colors[i], Settings))) g.FillRectangle(b, 57 + i * sw, 186, sw - 4, 22);
-            }
-        }
-    }
-
-    internal sealed class MainForm : Form {
+    internal sealed partial class MainForm : Form {
         Settings settings;
         bool previewOnly, ready, exiting, suspended, hiddenOnce, resourcesDisposed;
         internal bool StartHidden;
@@ -219,22 +55,7 @@ namespace NocnyFiltr {
             foreach (Control control in Controls) if (control.Top > windowsPanel.Top) control.Top += 30;
             ClientSize = new Size(ClientSize.Width, ClientSize.Height + 30);
             layoutScale = dpiScale;
-            graphToggle=ButtonAt(this,"▸ Live graph",12,34,336,24,delegate {ToggleGraph();});
-            graphToggle.SetBounds((int)(12*dpiScale),(int)(34*dpiScale),(int)(336*dpiScale),(int)(24*dpiScale));
-            foreach(Control control in Controls) if(control!=graphToggle && control.Top>32*dpiScale)control.Top+=(int)(30*dpiScale);
-            graphPanel=new RoundedPanel {BackColor=Theme.Card,Visible=false};
-            graphPanel.SetBounds((int)(12*dpiScale),(int)(62*dpiScale),(int)(336*dpiScale),(int)(174*dpiScale));Controls.Add(graphPanel);
-            liveGraph=new LiveGraph();liveGraph.SetBounds(0,(int)(28*dpiScale),graphPanel.Width,(int)(142*dpiScale));graphPanel.Controls.Add(liveGraph);
-            var target=new DarkButton {Text="Auto",Font=Theme.Font(8,FontStyle.Regular)};
-            target.SetBounds((int)(8*dpiScale),(int)(3*dpiScale),(int)(85*dpiScale),(int)(24*dpiScale));
-            target.Click+=delegate {liveGraph.Clear();};graphPanel.Controls.Add(target);
-            var freeze=new CheckBox {Text="Freeze",ForeColor=Theme.Muted,Font=Theme.Font(8,FontStyle.Regular)};freeze.SetBounds((int)(106*dpiScale),(int)(3*dpiScale),(int)(72*dpiScale),(int)(24*dpiScale));
-            freeze.CheckedChanged+=delegate {liveGraph.Frozen=freeze.Checked;};graphPanel.Controls.Add(freeze);
-            var legend=new Label {Text="Brightness",ForeColor=Color.FromArgb(242,200,110),Font=Theme.Font(7,FontStyle.Regular)};legend.SetBounds((int)(192*dpiScale),(int)(7*dpiScale),(int)(82*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(legend);
-            var dimLegend=new Label {Text="Dim",ForeColor=Theme.Accent,Font=Theme.Font(7,FontStyle.Regular)};dimLegend.SetBounds((int)(282*dpiScale),(int)(7*dpiScale),(int)(45*dpiScale),(int)(20*dpiScale));graphPanel.Controls.Add(dimLegend);dimLegend.BringToFront();
-            graphTimer=new System.Windows.Forms.Timer {Interval=33};
-            graphTimer.Tick+=delegate {if(!previewOnly && Visible && graphExpanded && !liveGraph.Frozen) {var data=new System.Text.StringBuilder(4096);Native.NfWindowReport(data,data.Capacity);liveGraph.Observe(data.ToString(),settings.Enabled && settings.Strength>0 && !suspended);}};
-            graphTimer.Start();
+            BuildGraphUi(dpiScale);
             ResumeLayout(false);
             VisibleChanged += delegate { UpdatePreviewRect(); };
             LocationChanged += delegate { UpdatePreviewRect(); };
@@ -396,19 +217,7 @@ namespace NocnyFiltr {
             }
             Poll();
         }
-        string FormatWindowReport(string raw) {
-            var firefox=new System.Text.StringBuilder();
-            var others=new System.Text.StringBuilder();
-            foreach(string line in raw.Split(new[]{"\r\n","\n"},StringSplitOptions.RemoveEmptyEntries)) {
-                int tab=line.IndexOf('\t');
-                if(tab>=0 && (line.Contains("Firefox video") || line.Contains("Firefox page:"))) {
-                    int percent=line.IndexOf('%');
-                    string label=line.Contains("Firefox video")?"Player":"Page";
-                    firefox.Append(label+" · Brightness "+line.Split('\t')[1]+"% · Dim "+line.Substring(0,percent)+"%\r\n");
-                } else others.Append((tab>=0?line.Substring(0,line.IndexOf('\t')):line)+"\r\n");
-            }
-            return firefox.ToString()+others;
-        }
+        string FormatWindowReport(string raw) { return WindowReport.FormatList(raw); }
         void Poll() {
             UpdatePreviewRect();
             if (!settings.Enabled || settings.Strength == 0) { windowList.Text=""; statusLabel.Text = T("Wstrzymany · oryginalny obraz"); toggle.Selected=false; toggle.Text=settings.Enabled ? T("Siła wynosi 0%") : T("○  Włącz filtr"); toggle.Invalidate(); if (tray != null) tray.Text = T("Nocny Filtr — wstrzymany"); return; }
@@ -432,12 +241,6 @@ namespace NocnyFiltr {
         void Save() { try { settings.Save(); } catch (Exception ex) { statusLabel.Text = T("Nie zapisano ustawień: ") + ex.Message; } }
         void UpdatePreviewRect() { if(!previewOnly && ready) Native.NfPreviewRect(0,0,0,0); }
         internal void Pause() { settings.Enabled = false; Apply(true); }
-        internal void ToggleGraph() {
-            graphExpanded=!graphExpanded;int shift=(int)(180*layoutScale)*(graphExpanded?1:-1);
-            foreach(Control control in Controls) if(control!=graphPanel && control!=graphToggle && control.Top>graphToggle.Bottom)control.Top+=shift;
-            graphPanel.Visible=graphExpanded;graphToggle.Text=graphExpanded?"▾ Live graph":"▸ Live graph";
-            liveGraph.Clear();AnchorPanel();
-        }
         void AnchorPanel() {
             Rectangle area = Screen.PrimaryScreen.WorkingArea;
             int margin = Math.Max(4, (int)Math.Round(6 * layoutScale));
