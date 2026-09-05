@@ -1,0 +1,31 @@
+name: Build Windows
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: pwsh
+        run: ./Build.ps1 -BuildDirectory "$PWD/build"
+      - name: Numeric tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory test-results -Force
+          $p = Start-Process ./Softlight.exe -ArgumentList '--self-test test-results/self-test.txt' -Wait -PassThru
+          Get-Content test-results/self-test.txt
+          if ($p.ExitCode -ne 0) { throw 'Tests failed' }
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Softlight-Windows-x64
+          path: |
+            Softlight.exe
+            Softlight.exe.config
+            NocnyFiltr.Engine.dll
+            assets/
+            LICENSE
+            README.md
+            test-results/

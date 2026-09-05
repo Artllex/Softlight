@@ -1,0 +1,10 @@
+*.exe
+*.dll
+*.zip
+*.obj
+*.lib
+*.exp
+build/
+dist/
+test-results/
+*.tmp
