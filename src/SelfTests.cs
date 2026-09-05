@@ -34,7 +34,7 @@ namespace NocnyFiltr {
                             p=Probe(patch.PointToScreen(new Point(200,100)),true);
                             Require((p[0]&255)>245 && (p[1]>>24)==255 && (p[2]&255)<100,"Fresh white frame was not dimmed before presentation");
                             Require(Math.Abs((int)(p[1]&255)-(int)(p[2]&255))<5,"DWM output does not match the processed frame");
-                            report.Add("PASS: fresh white capture is retained unmodified; processed HDR output="+(p[2]&255)+"/255, matching DWM composition.");
+                            report.Add("PASS: fresh white capture is retained unmodified; processed output="+(p[2]&255)+"/255, matching DWM composition.");
                             WaitUi(500);patch.Location=new Point(700,650);WaitUi(700);
                             var point=patch.PointToScreen(new Point(200,100));p=Probe(point,true);
                             Require((p[2]&255)<100 && Native.WindowFromPoint(point)==patch.Handle,"Moved protected window or click-through failed");
@@ -270,7 +270,9 @@ namespace NocnyFiltr {
                 new Settings().Save();
                 using(MainForm ui=new MainForm(false)) {
                     ui.Show();WaitUi(200);
-                    Require(!ContainsText(ui,"×"),"Close button still exists");
+                    Button closePanel=(Button)ui.Controls.Find("ClosePanel",true)[0];
+                    Require(closePanel.AccessibleName=="Close panel","Accessible close button missing");
+                    Require(ui.Controls.Find("AlwaysOnTop",true)[0] is ThemeCheckBox && ui.Controls.Find("StartWithWindows",true)[0] is ThemeCheckBox,"High contrast checkboxes missing");
                     Require(ContainsText(ui,"Strength"),"English default");
                     Label key=(Label)ui.Controls.Find("HotkeyStatus",true)[0];Require((bool)key.Tag,"Alt+F11 registration failed");
                     Rectangle original=ui.Bounds;
@@ -283,6 +285,14 @@ namespace NocnyFiltr {
                     CheckBox pin=(CheckBox)ui.Controls.Find("AlwaysOnTop",true)[0];
                     pin.Checked=true;WaitUi(650);Require(ui.TopMost&&Settings.Read(Settings.FilePath).AlwaysOnTop,"Pinned setting not applied/saved");
                     Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible,"Pinned panel hidden by shortcut");
+                    ((Button)ui.Controls.Find("ToggleFilter",true)[0]).PerformClick();WaitUi(1800);
+                    Native.NfGetStatus(out status);Require(status.State==2,"Active filter was not ready for the panel close test");
+                    closePanel.PerformClick();WaitUi(150);
+                    Require(!ui.Visible && ui.TopMost && Settings.Read(Settings.FilePath).AlwaysOnTop,"Close button must hide a pinned panel without clearing its setting");
+                    Native.NfGetStatus(out status);Require(status.State==2,"Panel close stopped the active filter");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible && ui.TopMost,"Pinned panel did not reopen");
+                    ui.Close();WaitUi(100);Require(!ui.Visible && !ui.IsDisposed,"Standard close must hide the panel, not exit");
+                    Native.PostMessage(ui.Handle,Program.ShowMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
                     pin.Checked=false;WaitUi(650);Require(!ui.TopMost&&!Settings.Read(Settings.FilePath).AlwaysOnTop,"Unpin not applied/saved");
                     ui.SetLanguage("pl");WaitUi(650);Require(ContainsText(ui,"Siła automatycznego przyciemniania"),"Polish translation");Require(Settings.Read(Settings.FilePath).Language=="pl","Polish persistence");
                     ui.SetLanguage("en");WaitUi(650);Require(ContainsText(ui,"Strength"),"English translation");Require(Settings.Read(Settings.FilePath).Language=="en","English persistence");
@@ -294,7 +304,7 @@ namespace NocnyFiltr {
                     Require(Settings.Read(Settings.FilePath).Strength==70,"Reopened panel changed strength");
                     Native.PostMessage(reopened.Handle,Program.ExitMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(100);
                 }
-                report.Add("PASS: no close button; English default; Alt+F11 registered; hotkey handler hides/shows without changing filter; anchor retained; pin/unpin applies TopMost and persists; pinned hotkey keeps panel visible; English/Polish switch and persistence; closed and reopened panel restores custom slider values.");
+                report.Add("PASS: accessible close button hides even a pinned panel, preserves pin/filter state and allows reopening; standard close hides instead of exiting; high-contrast checkboxes; English default; Alt+F11 registered; anchor retained; pin, language and slider preferences survive reopening.");
                 File.Delete(Settings.FilePath);File.WriteAllLines(path,report,Encoding.UTF8);return 0;
             } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report,Encoding.UTF8);return 1;}
             finally {Native.NfEnable(0);Native.NfStop();}

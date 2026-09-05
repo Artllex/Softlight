@@ -1,29 +1,16 @@
+#pragma once
+#include "LuminanceSampler.h"
 // Window bounds are refreshed at presentation rate.
 // The selected analysis rate controls ordinary changes; new frames detect cuts.
 static std::mutex reportMutex;
 static std::wstring windowReport;
 struct WindowRegion { HWND handle; RECT rect; bool eligible; std::wstring title; int part=0; bool browser=false; };
-static std::mutex playerMutex;
-static HWND playerWindow=nullptr;
-static RECT playerRect{},playerWindowRect{};
-static ULONGLONG playerSeen=0;
-static unsigned playerGeneration=0;
-static std::map<HWND,int> browserContexts,announcedContexts;
-struct BrowserSnapshot {
-    double time; HWND window;RECT rect,windowRect;unsigned generation;std::map<HWND,int> contexts;
-};
-static std::deque<BrowserSnapshot> browserHistory;
-static void RememberBrowser(double time) {
-    browserHistory.push_back({time,playerWindow,playerRect,playerWindowRect,playerGeneration,browserContexts});
-    while(browserHistory.size()>64)browserHistory.pop_front();
-}
+#include "BrowserContext.h"
 #include "DimmingResponse.h"
 struct WindowAnalyzer {
     std::vector<WindowRegion> windows;
     std::map<HWND,std::wstring> localTitles;
-    float luminance[160*100]{};
-    bool hasLuminance=false;
-    float sampledWhiteLevel=0;
+    LuminanceSampler sampler;
     std::map<std::pair<HWND,int>,WindowGain> states;
     unsigned seenPlayerGeneration=0;
     HWND lastActive=nullptr,pendingSelected=nullptr;
@@ -39,8 +26,6 @@ struct WindowAnalyzer {
     RECT desktop{};
     double sampleTime=0; ULONGLONG tickTime=0;
     float previousStrength=-1;
-    ComPtr<ID3D11Texture2D> sampleTexture, staging;
-    ComPtr<ID3D11RenderTargetView> smallTarget;
     static BOOL CALLBACK Enumerate(HWND h, LPARAM p) {
         auto& a=*reinterpret_cast<WindowAnalyzer*>(p);
         if(!IsWindowVisible(h)||IsIconic(h)) return TRUE;
@@ -74,13 +59,7 @@ struct WindowAnalyzer {
         desktop=bounds; windows.clear(); EnumWindows(Enumerate,reinterpret_cast<LPARAM>(this));
         ULONGLONG now=GetTickCount64();
         {
-            std::lock_guard<std::mutex> lock(playerMutex);
-            BrowserSnapshot snapshot{0,playerWindow,playerRect,playerWindowRect,playerGeneration,browserContexts};
-            // Never reinterpret a captured frame with metadata from a later tab.
-            if(!browserHistory.empty()) {
-                snapshot=browserHistory.front();
-                for(auto i=browserHistory.rbegin();i!=browserHistory.rend();++i)if(i->time<=captureTime){snapshot=*i;break;}
-            }
+            auto snapshot=BrowserContext::ForFrame(captureTime);
             contexts=snapshot.contexts;
             HWND framePlayer=snapshot.window;unsigned frameGeneration=snapshot.generation;
             if(seenPlayerGeneration!=frameGeneration) {
@@ -88,7 +67,7 @@ struct WindowAnalyzer {
                 seenPlayerGeneration=frameGeneration;
             }
             RECT current{};
-            if(framePlayer && now-playerSeen<500 &&
+            if(framePlayer && now-snapshot.seenAt<500 &&
                 GetWindowRect(framePlayer,&current) && EqualRect(&current,&snapshot.windowRect)) {
                 for(size_t i=0;i<windows.size() && windows.size()<64;i++) if(windows[i].handle==framePlayer && windows[i].eligible) {
                     RECT clipped{};
@@ -116,29 +95,10 @@ struct WindowAnalyzer {
         // New captured frames are also checked for large bright jumps. Ordinary
         // target changes still obey the selected analysis interval.
         if(sampleReady || frameChanged || manual) {
-            if(!sampleTexture) {
-                D3D11_TEXTURE2D_DESC d{};d.Width=160;d.Height=100;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
-                d.Format=DXGI_FORMAT_R32_FLOAT;d.BindFlags=D3D11_BIND_RENDER_TARGET;
-                Check(gpu.device->CreateTexture2D(&d,nullptr,&sampleTexture));
-                Check(gpu.device->CreateRenderTargetView(sampleTexture.Get(),nullptr,&smallTarget));
-                d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-                Check(gpu.device->CreateTexture2D(&d,nullptr,&staging));
-            }
-            // Controls and regular response ticks can reuse the last measurement.
-            // A fresh frame always gets a fresh readback before it is presented.
-            if(frameChanged || !hasLuminance || sampledWhiteLevel!=s.whiteLevel) {
-                Settings sample=s;sample.mode=2;for(float& v:sample.previewRect)v=0;
-                gpu.Draw(source,smallTarget.Get(),160,100,sample);
-                gpu.context->CopyResource(staging.Get(),sampleTexture.Get());
-                double mapStart=PipelineTrace::Milliseconds();
-                D3D11_MAPPED_SUBRESOURCE map{};Check(gpu.context->Map(staging.Get(),0,D3D11_MAP_READ,0,&map));
-                PipelineTrace::Mark(8,0,PipelineTrace::Milliseconds()-mapStart);
-                for(int y=0;y<100;y++)memcpy(luminance+y*160,static_cast<unsigned char*>(map.pData)+y*map.RowPitch,160*sizeof(float));
-                gpu.context->Unmap(staging.Get(),0);hasLuminance=true;sampledWhiteLevel=s.whiteLevel;
-            }
+            sampler.Update(gpu,source,s,frameChanged);
             double totals[64]{};int counts[64]{};double scene=0;int pixels=0;
             for(int y=0;y<100;y++) for(int x=0;x<160;x++) {
-                float lum=luminance[y*160+x];
+                float lum=sampler.luminance[y*160+x];
                 POINT pt{bounds.left+LONG((x+.5)*width/160),bounds.top+LONG((y+.5)*height/100)};
                 for(size_t i=0;i<windows.size();i++) if(PtInRect(&windows[i].rect,pt)) {
                     if(windows[i].eligible) { totals[i]+=lum;counts[i]++;scene+=lum;pixels++; }

@@ -32,6 +32,7 @@ namespace NocnyFiltr {
         ContextMenuStrip trayMenu;
         string T(string text) { return Language.Text(text,settings.Language); }
         bool hotkeyRegistered;
+        PanelCloseButton closePanel;
         float layoutScale = 1;
         internal MainForm(bool previewOnly) {
             SuspendLayout();
@@ -108,7 +109,9 @@ namespace NocnyFiltr {
         }
         void BuildUi() {
             Panel header=new Panel { Location=Point.Empty,Size=new Size(360,32),BackColor=Theme.Card };Controls.Add(header);
-            LabelAt(header,"Softlight",14,5,332,24,10,Theme.Text,false);
+            LabelAt(header,"Softlight",14,5,300,24,10,Theme.Text,false);
+            closePanel=new PanelCloseButton {Name="ClosePanel",Location=new Point(328,0),Size=new Size(32,32)};
+            closePanel.Click+=delegate {HidePanel();};header.Controls.Add(closePanel);
             toggle=ButtonAt(this,"",12,40,336,50,delegate {settings.Enabled=!settings.Enabled;Apply(true);});toggle.Name="ToggleFilter";
             statusLabel=LabelAt(this,"",14,380,170,30,7.5f,Theme.Muted,false);
             LabelAt(this,"Show/hide panel (Alt + F11)",14,412,170,18,7.5f,Theme.Muted,false);
@@ -130,10 +133,10 @@ namespace NocnyFiltr {
             Panel windowsCard=new RoundedPanel {Location=new Point(12,308),Size=new Size(336,62),BackColor=Theme.Card};Controls.Add(windowsCard);
             LabelAt(windowsCard,"ROZPOZNANE OKNA",12,6,244,24,8.5f,Theme.Text,true);
             windowList=new WindowList {Location=new Point(8,30),Size=new Size(320,28),BackColor=Theme.Card,ForeColor=Theme.Muted,Font=Theme.Font(9,FontStyle.Regular)};windowsCard.Controls.Add(windowList);
-            CheckBox auto=new CheckBox {Text="Uruchamiaj z Windows",Tag="Uruchamiaj z Windows",Location=new Point(190,402),Size=new Size(158,21),Font=Theme.Font(8,FontStyle.Regular),ForeColor=Theme.Muted,FlatStyle=FlatStyle.Flat};
+            CheckBox auto=new ThemeCheckBox {Name="StartWithWindows",Text="Uruchamiaj z Windows",Tag="Uruchamiaj z Windows",Location=new Point(190,402),Size=new Size(158,21),Font=Theme.Font(8,FontStyle.Regular),ForeColor=Theme.Muted,FlatStyle=FlatStyle.Flat};
             if(!previewOnly) {try {auto.Checked=Settings.AutoStart;}catch {auto.Enabled=false;}}
             auto.CheckedChanged+=delegate {if(!previewOnly) {try {Settings.AutoStart=auto.Checked;}catch(Exception ex) {MessageBox.Show(ex.Message);}}};Controls.Add(auto);
-            CheckBox pin=new CheckBox {Name="AlwaysOnTop",Text="Zawsze na wierzchu",Tag="Zawsze na wierzchu",Location=new Point(190,378),Size=new Size(158,21),Font=Theme.Font(8,FontStyle.Regular),ForeColor=Theme.Muted,FlatStyle=FlatStyle.Flat,Checked=settings.AlwaysOnTop};
+            CheckBox pin=new ThemeCheckBox {Name="AlwaysOnTop",Text="Zawsze na wierzchu",Tag="Zawsze na wierzchu",Location=new Point(190,378),Size=new Size(158,21),Font=Theme.Font(8,FontStyle.Regular),ForeColor=Theme.Muted,FlatStyle=FlatStyle.Flat,Checked=settings.AlwaysOnTop};
             pin.CheckedChanged+=delegate {settings.AlwaysOnTop=pin.Checked;TopMost=pin.Checked;Apply(true);};Controls.Add(pin);
             TopMost=settings.AlwaysOnTop;
             hotkeyLabel=LabelAt(this,"Alt + F11: pokaż / ukryj panel",14,417,332,20,8,Theme.Muted,false);hotkeyLabel.Name="HotkeyStatus";hotkeyLabel.Visible=false;
@@ -189,6 +192,7 @@ namespace NocnyFiltr {
             trayMenu.Close();
         }
         void UpdateLanguage() {
+            closePanel.AccessibleName=T("Zamknij panel");
             Language.Apply(this,settings.Language);
             speedSlider.AccessibleName=T("Szybkość reakcji");suddenSlider.AccessibleName=T("Reakcja na nagłą zmianę");
             strength.AccessibleName=T("Siła automatycznego przyciemniania");
@@ -257,6 +261,7 @@ namespace NocnyFiltr {
             UpdatePreviewRect();
         }
         void ShowPanel() { WindowState = FormWindowState.Normal; AnchorPanel(); Show(); AnchorPanel(); Activate(); }
+        void HidePanel() { Hide(); if(!previewOnly)Save(); }
         void TogglePanel() { if(Visible && !settings.AlwaysOnTop) Hide(); else ShowPanel(); }
         void Exit() { exiting = true; Native.NfEnable(0); Close(); }
         void OnSessionSwitch(object sender, SessionSwitchEventArgs e) {
@@ -291,7 +296,7 @@ namespace NocnyFiltr {
         struct NativeRect { public int Left, Top, Right, Bottom; }
         protected override void OnFormClosing(FormClosingEventArgs e) {
             if (!exiting && !previewOnly && e.CloseReason == CloseReason.UserClosing) {
-                e.Cancel = true; if(settings.AlwaysOnTop) ShowPanel(); else Hide(); Save();
+                e.Cancel = true; HidePanel();
             } else {
                 if (!previewOnly) { Native.NfEnable(0); Save(); }
                 if (tray != null) tray.Visible = false;

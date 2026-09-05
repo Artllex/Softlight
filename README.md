@@ -39,7 +39,7 @@ The installer and portable package include the Firefox extension and native host
 
 Click **Enable filter** to start. **Alt + F11** or a left click on the tray icon shows or hides the panel. Right-click the tray icon for frequency, power-saving, language and exit options.
 
-**Always on top** keeps the panel visible and prevents hiding it with the shortcut or tray icon until unpinned. **Start with Windows** launches it in the tray, unless pinned.
+**Always on top** keeps the panel visible and prevents hiding it with the shortcut or tray icon until unpinned. The **×** button always hides the panel, including when pinned; filtering continues and the pin setting is retained. Use Alt + F11 or the tray icon to reopen it. **Start with Windows** launches it in the tray, unless pinned.
 
 Settings live in `%LOCALAPPDATA%\NocnyFiltrWindows\settings.ini`, retaining compatibility with development builds. Exiting saves settings and removes the overlays. Uninstalling preserves settings.
 

@@ -28,6 +28,10 @@ namespace NocnyFiltr {
             if (args.Length > 0 && args[0] == "--render-ui") {
                 using (MainForm f = new MainForm(true)) {
                     f.Show(); Application.DoEvents();
+                    if(Array.IndexOf(args,"--checked")>=0) {
+                        ((CheckBox)f.Controls.Find("AlwaysOnTop",true)[0]).Checked=true;
+                        ((CheckBox)f.Controls.Find("StartWithWindows",true)[0]).Checked=true;
+                    }
                     if(Array.IndexOf(args,"--graph")>=0) {f.ToggleGraph();Application.DoEvents();}
                     using (Bitmap b = new Bitmap(f.Width, f.Height)) { f.DrawToBitmap(b, new Rectangle(Point.Empty, f.Size)); b.Save(args[1], ImageFormat.Png); }
                 }
