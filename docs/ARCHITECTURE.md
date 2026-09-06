@@ -1,5 +1,11 @@
 # Architecture and refactoring checks
 
+## Selected baseline
+
+This branch uses `d0a421f` for all capture, analysis, dimming, rendering, graph timing and Firefox communication. Only the later panel close button, high-contrast footer checkboxes, their UI tests and checked-state preview have been brought forward. The close button, shortcut and tray toggle hide even a pinned panel while retaining filtering and the pin preference. Native caption dragging moves the panel; saved coordinates survive hide/show and restart, and are clamped to the working area when the display layout changes. Panel transitions are disabled per window before it is shown. Graph layout changes suspend redraw and apply position and size in one operation; Active and Live graph share a row below the expanded graph. The original baseline's flash and window-transition behavior is retained.
+
+Validation: the processing and Firefox sources match `d0a421f`; numerical tests and the live interface check pass. The checked-state preview was inspected at 250% scaling. Earlier comparison builds and the later engine changes remain in separate workspaces.
+
 ## Responsibilities
 
 - `Program.cs`: startup, single instance routing and diagnostic command dispatch.

@@ -1,4 +1,4 @@
-# Firefox integration — Softlight 2.1.0
+# Firefox integration — Softlight 2.2.0
 
 Stable application baseline tested on Firefox and YouTube. The companion extension is unsigned and currently loaded temporarily.
 

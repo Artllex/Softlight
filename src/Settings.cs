@@ -10,6 +10,7 @@ namespace NocnyFiltr {
         public bool Enabled = false;
         public bool AlwaysOnTop = false; public int Frequency = 30; public int Speed = 75, SuddenSpeed = 30;
         public string Language = "en";
+        public int? PanelX,PanelY;
         internal bool HdrPreview = false;
         internal static string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NocnyFiltrWindows");
         internal static string FilePath = Path.Combine(Folder, "settings.ini");
@@ -31,6 +32,8 @@ namespace NocnyFiltr {
                     if (p[0] == "fps") s.Fps = n <= 30 ? 30 : 120;
                     if (p[0] == "alwaysOnTop") s.AlwaysOnTop = n == 1;
                     if (p[0] == "enabled") s.Enabled = n == 1;
+                    if (p[0] == "panelX") s.PanelX = n;
+                    if (p[0] == "panelY") s.PanelY = n;
                 }
             } catch (Exception e) { LoadWarning = "Nie udało się odczytać ustawień: " + e.Message; }
             return s;
@@ -41,6 +44,7 @@ namespace NocnyFiltr {
             string tmp = path + ".tmp";
             string text = string.Format(CultureInfo.InvariantCulture,
                 "threshold={0}\nstrength={1}\ncurve={2}\nfps={3}\nenabled={4}\nlanguage={5}\nalwaysOnTop={6}\nanalysisHz={7}\nspeed={8}\nsuddenSpeed={9}\n", Threshold, Strength, Curve, Fps, Enabled ? 1 : 0, Language, AlwaysOnTop ? 1 : 0, Frequency, Speed, SuddenSpeed);
+            if(PanelX.HasValue && PanelY.HasValue)text+=string.Format(CultureInfo.InvariantCulture,"panelX={0}\npanelY={1}\n",PanelX.Value,PanelY.Value);
             File.WriteAllText(tmp, text, new UTF8Encoding(false));
             if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
         }

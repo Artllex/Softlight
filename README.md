@@ -15,9 +15,15 @@ Get the installer or portable ZIP from [Releases](https://github.com/Artllex/Sof
 
 Windows 10 version 2004 or newer, or Windows 11, x64. Uses .NET Framework 4.8 and Direct3D 11. The application is not code-signed; Windows may display a reputation warning.
 
-## Firefox integration (2.1.0)
+## Firefox integration
 
 The installer and portable package include the Firefox extension and native host. Follow [Firefox setup](FIREFOX.md) to load the unsigned extension temporarily. It must be loaded again after restarting Firefox.
+
+## Version 2.2.0
+
+This release completes the panel interface: draggable and remembered position, high-contrast checkboxes, an always-available close button, and Alt + F11 toggling even when pinned. Active and Live graph share a row; the graph opens above them. Panel transitions are disabled and layout changes are applied together.
+
+Image processing uses the selected `d0a421f` baseline. Brief bright flashes and delayed or duplicate graph markers during context changes remain known limitations; this release does not claim to fix them.
 
 ## Features
 
@@ -38,7 +44,7 @@ The installer and portable package include the Firefox extension and native host
 
 Click **Enable filter** to start. **Alt + F11** or a left click on the tray icon shows or hides the panel. Right-click the tray icon for frequency, power-saving, language and exit options.
 
-**Always on top** keeps the panel visible and prevents hiding it with the shortcut or tray icon until unpinned. **Start with Windows** launches it in the tray, unless pinned.
+**Always on top** keeps the panel above other windows. **Alt + F11**, the tray icon and **×** can hide it even when pinned; filtering continues and the pin setting is retained. Drag the header to move the panel. Its position is remembered when reopening and restarting, and kept within an available screen. **Start with Windows** launches it in the tray, unless pinned.
 
 Settings live in `%LOCALAPPDATA%\NocnyFiltrWindows\settings.ini`, retaining compatibility with development builds. Exiting saves settings and removes the overlays. Uninstalling preserves settings.
 

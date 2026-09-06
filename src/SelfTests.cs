@@ -213,12 +213,16 @@ namespace NocnyFiltr {
         }
         internal static int InterfaceCheck(string path) {
             List<string> report=new List<string>();
+            Point moved=Point.Empty;
             try {
                 Settings.Folder=Path.GetDirectoryName(Path.GetFullPath(path));Settings.FilePath=Path.Combine(Settings.Folder,"language-ui-test.ini");
                 new Settings().Save();
                 using(MainForm ui=new MainForm(false)) {
                     ui.Show();WaitUi(200);
-                    Require(!ContainsText(ui,"×"),"Close button still exists");
+                    Require(ui.PanelTransitionsDisabled,"Panel transitions were not disabled");
+                    Button closePanel=(Button)ui.Controls.Find("ClosePanel",true)[0];
+                    Require(closePanel.AccessibleName=="Close panel","Accessible close button missing");
+                    Require(ui.Controls.Find("AlwaysOnTop",true)[0] is ThemeCheckBox && ui.Controls.Find("StartWithWindows",true)[0] is ThemeCheckBox,"High contrast checkboxes missing");
                     Require(ContainsText(ui,"Strength"),"English default");
                     Label key=(Label)ui.Controls.Find("HotkeyStatus",true)[0];Require((bool)key.Tag,"Alt+F11 registration failed");
                     Rectangle original=ui.Bounds;
@@ -230,19 +234,50 @@ namespace NocnyFiltr {
                     ((Slider)ui.Controls.Find("ChangeSpeed",true)[0]).Value=80;((Slider)ui.Controls.Find("SuddenSpeed",true)[0]).Value=20;WaitUi(650);Require(Settings.Read(Settings.FilePath).Speed==80 && Settings.Read(Settings.FilePath).SuddenSpeed==20,"Speed sliders persistence");
                     CheckBox pin=(CheckBox)ui.Controls.Find("AlwaysOnTop",true)[0];
                     pin.Checked=true;WaitUi(650);Require(ui.TopMost&&Settings.Read(Settings.FilePath).AlwaysOnTop,"Pinned setting not applied/saved");
-                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible,"Pinned panel hidden by shortcut");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(!ui.Visible && ui.TopMost,"Pinned shortcut must hide without unpinning");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible && ui.TopMost,"Pinned shortcut must reopen");
+                    ((Button)ui.Controls.Find("ToggleFilter",true)[0]).PerformClick();WaitUi(1800);
+                    Native.NfGetStatus(out status);Require(status.State==2,"Active filter was not ready for the panel close test");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
+                    Native.NfGetStatus(out status);Require(!ui.Visible && status.State==2,"Pinned shortcut stopped filtering or failed to hide");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
+                    closePanel.PerformClick();WaitUi(150);
+                    Require(!ui.Visible && ui.TopMost && Settings.Read(Settings.FilePath).AlwaysOnTop,"Close button must hide a pinned panel without clearing its setting");
+                    Native.NfGetStatus(out status);Require(status.State==2,"Panel close stopped the active filter");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible && ui.TopMost,"Pinned panel did not reopen");
+                    ui.Close();WaitUi(100);Require(!ui.Visible && !ui.IsDisposed,"Standard close must hide the panel, not exit");
+                    Native.PostMessage(ui.Handle,Program.ShowMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
                     pin.Checked=false;WaitUi(650);Require(!ui.TopMost&&!Settings.Read(Settings.FilePath).AlwaysOnTop,"Unpin not applied/saved");
                     ui.SetLanguage("pl");WaitUi(650);Require(ContainsText(ui,"Siła automatycznego przyciemniania"),"Polish translation");Require(Settings.Read(Settings.FilePath).Language=="pl","Polish persistence");
                     ui.SetLanguage("en");WaitUi(650);Require(ContainsText(ui,"Strength"),"English translation");Require(Settings.Read(Settings.FilePath).Language=="en","English persistence");
+                    moved=new Point(Screen.PrimaryScreen.WorkingArea.Left+40,Screen.PrimaryScreen.WorkingArea.Top+40);
+                    ui.Location=moved;Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
+                    Require(Settings.Read(Settings.FilePath).PanelX==moved.X && Settings.Read(Settings.FilePath).PanelY==moved.Y,"Moved panel location not saved");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Location==moved,"Reopening moved panel reset position");
+                    ui.ToggleGraph();ui.ToggleGraph();Require(ui.Location==moved,"Graph toggle reset panel position");
+                    Rectangle area=Screen.PrimaryScreen.WorkingArea;
+                    ui.Location=new Point(area.Right-ui.Width-15,area.Bottom-ui.Height-15);
+                    Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
+                    Rectangle collapsed=ui.Bounds;var layoutFrames=new List<Rectangle>();
+                    EventHandler recordBounds=delegate {layoutFrames.Add(ui.Bounds);};
+                    ui.LocationChanged+=recordBounds;ui.SizeChanged+=recordBounds;
+                    ui.ToggleGraph();Rectangle expanded=ui.Bounds;
+                    ui.LocationChanged-=recordBounds;ui.SizeChanged-=recordBounds;
+                    Require(ui.Visible && expanded.Height>collapsed.Height && area.Contains(expanded),"Expanded graph is hidden or outside the screen");
+                    foreach(Rectangle frame in layoutFrames)Require(frame==expanded,"Graph expansion exposed an intermediate window position/size");
+                    ui.ToggleGraph();Require(ui.Visible && ui.Bounds==collapsed,"Graph collapse did not restore window bounds");
+                    ui.Location=moved;Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
                     Native.PostMessage(ui.Handle,Program.ExitMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(100);
                 }
                 using(MainForm reopened=new MainForm(false)) {
                     reopened.Show();WaitUi(200);
+                    Require(reopened.Location==moved,"Restart lost panel location");
                     Require(((Slider)reopened.Controls.Find("ChangeSpeed",true)[0]).Value==80 && ((Slider)reopened.Controls.Find("SuddenSpeed",true)[0]).Value==20,"Reopened panel lost custom slider values");
                     Require(Settings.Read(Settings.FilePath).Strength==70,"Reopened panel changed strength");
                     Native.PostMessage(reopened.Handle,Program.ExitMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(100);
                 }
-                report.Add("PASS: no close button; English default; Alt+F11 registered; hotkey handler hides/shows without changing filter; anchor retained; pin/unpin applies TopMost and persists; pinned hotkey keeps panel visible; English/Polish switch and persistence; closed and reopened panel restores custom slider values.");
+                report.Add("PASS: accessible close button hides even a pinned panel, preserves pin/filter state and allows reopening; standard close hides instead of exiting; high-contrast checkboxes; English default; Alt+F11 registered; anchor retained; pin, language and slider preferences survive reopening.");
                 File.Delete(Settings.FilePath);File.WriteAllLines(path,report,Encoding.UTF8);return 0;
             } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report,Encoding.UTF8);return 1;}
             finally {Native.NfEnable(0);Native.NfStop();}

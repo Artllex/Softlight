@@ -5,6 +5,7 @@ using System.Windows.Forms;
 namespace NocnyFiltr {
     internal static class Language {
         static readonly Dictionary<string,string> English = new Dictionary<string,string> {
+            {"Zamknij panel","Close panel"},
             {"Panel przypięty — odznacz, aby ukrywać.","Panel pinned — uncheck to allow hiding."},
             {"Standardowo · 4 Hz","Standard · 4 Hz"}, {"Na bieżąco · 30 Hz","Real-time · 30 Hz"}, {"Częstotliwość","Frequency"}, {"Szybkość reakcji","Speed"}, {"Reakcja na nagłą zmianę","Sudden change"}, {"Zawsze na wierzchu","Always on top"},
             {"Nocny Filtr · Okna","Softlight · Windows"},

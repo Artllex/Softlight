@@ -1,7 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$IsccPath)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-$version = '2.1.0'
+$version = '2.2.0'
 New-Item -ItemType Directory -Force dist | Out-Null
 & $IsccPath installer/Softlight.iss
 if ($LASTEXITCODE) { throw 'Installer compilation failed.' }

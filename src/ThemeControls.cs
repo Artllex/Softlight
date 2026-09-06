@@ -53,6 +53,52 @@ namespace NocnyFiltr {
             if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4));
         }
     }
+    internal sealed class PanelCloseButton : Button {
+        internal PanelCloseButton() {
+            FlatStyle=FlatStyle.Flat;FlatAppearance.BorderSize=0;
+            Cursor=Cursors.Hand;Text="×";TabStop=false;
+            SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);
+        }
+        protected override void OnPaint(PaintEventArgs e) {
+            bool hover=ClientRectangle.Contains(PointToClient(Cursor.Position));
+            e.Graphics.Clear(hover?Color.FromArgb(190,45,55):Theme.Card);
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            float radius=Width*.14f;
+            using(var pen=new Pen(Theme.Text,Math.Max(1,Width/28f))) {
+                e.Graphics.DrawLine(pen,Width/2f-radius,Height/2f-radius,Width/2f+radius,Height/2f+radius);
+                e.Graphics.DrawLine(pen,Width/2f+radius,Height/2f-radius,Width/2f-radius,Height/2f+radius);
+            }
+            if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-4,-4));
+        }
+    }
+    // Retain native CheckBox input and accessibility; draw a high-contrast glyph.
+    internal sealed class ThemeCheckBox : CheckBox {
+        internal ThemeCheckBox() {
+            SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.ResizeRedraw,true);
+            Cursor=Cursors.Hand;
+        }
+        protected override void OnPaint(PaintEventArgs e) {
+            e.Graphics.Clear(BackColor);
+            float scale=Height/21f;int box=Math.Max(12,(int)Math.Round(13*scale));
+            var rect=new Rectangle(1,(Height-box)/2,box,box);
+            using(var fill=new SolidBrush(Checked?(Enabled?Theme.Accent:Theme.Border):Theme.Background))e.Graphics.FillRectangle(fill,rect);
+            using(var edge=new Pen(Checked?Theme.Accent:Theme.Muted,Math.Max(1,scale)))e.Graphics.DrawRectangle(edge,rect);
+            if(Checked) {
+                e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+                using(var mark=new Pen(Enabled?Theme.Background:Theme.Muted,Math.Max(2,2*scale))) {
+                    mark.StartCap=mark.EndCap=LineCap.Round;mark.LineJoin=LineJoin.Round;
+                    e.Graphics.DrawLines(mark,new[]{new PointF(rect.Left+box*.22f,rect.Top+box*.51f),new PointF(rect.Left+box*.43f,rect.Top+box*.72f),new PointF(rect.Left+box*.80f,rect.Top+box*.28f)});
+                }
+            }
+            var textRect=new Rectangle(box+(int)(5*scale),0,Width-box-(int)(5*scale),Height);
+            TextRenderer.DrawText(e.Graphics,Text,Font,textRect,Enabled?ForeColor:Theme.Muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
+            if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,textRect,Theme.Text,BackColor);
+        }
+        protected override void OnCheckedChanged(EventArgs e){base.OnCheckedChanged(e);Invalidate();}
+        protected override void OnEnabledChanged(EventArgs e){base.OnEnabledChanged(e);Invalidate();}
+        protected override void OnGotFocus(EventArgs e){base.OnGotFocus(e);Invalidate();}
+        protected override void OnLostFocus(EventArgs e){base.OnLostFocus(e);Invalidate();}
+    }
     internal sealed class Slider : Control {
         int value; internal int Maximum=95; internal bool CenterMark=false;
         internal event EventHandler ValueChanged;
