@@ -18,7 +18,6 @@ namespace NocnyFiltr {
             try { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            if (args.Length > 0 && args[0] == "--flash-check") return SelfTests.FlashCheck(args[1]);
             if (args.Length > 0 && args[0] == "--firefox-check") return SelfTests.FirefoxCheck(args[1]);
             if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : "self-test.txt");
             if (args.Length > 0 && args[0] == "--interface-check") return SelfTests.InterfaceCheck(args[1]);
@@ -38,7 +37,7 @@ namespace NocnyFiltr {
                 return 0;
             }
             if (args.Length > 0 && args[0] == "--smoke-test") return SelfTests.WindowSmoke(args[1]);
-            if (args.Length > 0 && args[0] == "--motion-test") return SelfTests.Motion(args[1],args.Length>2 && args[2]=="protected");
+            if (args.Length > 0 && args[0] == "--motion-test") return SelfTests.Motion(args[1]);
             if (args.Length > 0 && args[0] == "--exit") {
                 Native.PostMessage(Native.FindWindow(null, Title), ExitMessage, IntPtr.Zero, IntPtr.Zero); return 0;
             }

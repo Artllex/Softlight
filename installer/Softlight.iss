@@ -1,4 +1,4 @@
-#define AppVersion "2.1.0"
+#define AppVersion "2.2.0"
 [Setup]
 AppId={{145126A1-604E-4935-9E3A-395D765DAC22}
 AppName=Softlight

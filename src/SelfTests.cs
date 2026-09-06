@@ -8,53 +8,10 @@ using System.Windows.Forms;
 
 namespace NocnyFiltr {
     internal static class SelfTests {
-        internal static int FlashCheck(string path) {
-            var report=new List<string>();
-            try {
-                foreach(int protection in new[]{0,1}) {
-                    using(var patch=new Form {Text="Softlight flash test",StartPosition=FormStartPosition.Manual,AutoScaleMode=AutoScaleMode.None,
-                        Bounds=new Rectangle(150,200,600,360),FormBorderStyle=FormBorderStyle.None,BackColor=Color.FromArgb(24,24,24),TopMost=true}) {
-                        patch.Show();WaitUi(200);Native.NfStart();Native.NfConfigure(0,.95f,0,120);Native.NfTiming(30,75,30);
-                        Native.NfFlashProtection(protection);Native.NfEnable(1);WaitUi(1800);
-                        uint[] initial=null;
-                        for(int attempt=0;attempt<10;attempt++) {
-                            patch.BringToFront();WaitUi(200);initial=Probe(patch.PointToScreen(new Point(200,100)),false);
-                            if(Math.Abs((int)(initial[0]&255)-24)<=2 && (protection!=0?(initial[1]>>24)==255:(initial[1]>>24)<4))break;
-                        }
-                        report.Add("Dark setup: bounds="+patch.Bounds+" handle="+patch.Handle+" hit="+Native.WindowFromPoint(patch.PointToScreen(new Point(200,100)))+" source="+initial[0].ToString("X8"));
-                        Require((initial[0]&255)<40 && (protection!=0?(initial[1]>>24)==255:(initial[1]>>24)<4),"Dark test window is obscured or not ready: input="+initial[0].ToString("X8")+" output="+initial[1].ToString("X8"));
-                        // Hold the last captured dark frame while the real window turns white.
-                        // The compositor output, not the graph, must remain dark with protection.
-                        Native.NfTestHoldCapture(1);WaitUi(100);patch.BackColor=Color.White;patch.Refresh();WaitUi(100);
-                        var p=Probe(patch.PointToScreen(new Point(200,100)),true);int displayed=(int)(p[2]&255);
-                        report.Add((protection==0?"Overlay":"Protected frame")+": white source during held capture -> displayed "+displayed+"/255; input="+p[0].ToString("X8")+" output="+p[1].ToString("X8"));
-                        Require(protection==0?displayed>245:displayed<40,"First bright frame leaked through protection");
-                        if(protection!=0) {
-                            Native.NfTestHoldCapture(0);WaitUi(1500);
-                            p=Probe(patch.PointToScreen(new Point(200,100)),true);
-                            Require((p[0]&255)>245 && (p[1]>>24)==255 && (p[2]&255)<100,"Fresh white frame was not dimmed before presentation");
-                            Require(Math.Abs((int)(p[1]&255)-(int)(p[2]&255))<5,"DWM output does not match the processed frame");
-                            report.Add("PASS: fresh white capture is retained unmodified; processed output="+(p[2]&255)+"/255, matching DWM composition.");
-                            WaitUi(500);patch.Location=new Point(700,650);WaitUi(700);
-                            var point=patch.PointToScreen(new Point(200,100));p=Probe(point,true);
-                            Require((p[2]&255)<100 && Native.WindowFromPoint(point)==patch.Handle,"Moved protected window or click-through failed");
-                            report.Add("PASS: protected window follows movement and remains click-through.");
-                            WaitUi(500);Native.NfFlashProtection(0);WaitUi(500);p=Probe(point,false);
-                            Require((p[1]>>24)<255 && (p[1]&0xffffff)==0,"Cannot switch back to a transparent mask");
-                            report.Add("PASS: protection can be disabled without restarting the filter.");
-                        }
-                        Native.NfEnable(0);Native.NfStop();patch.Hide();WaitUi(200);
-                    }
-                }
-                report.Add("PASS: real DWM composition reproduces the flash with a transparent mask and prevents it with a synchronized frame.");
-                File.WriteAllLines(path,report);return 0;
-            } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report);return 1;}
-            finally {Native.NfEnable(0);Native.NfStop();Native.NfTestHoldCapture(0);Native.NfFlashProtection(0);}
-        }
         internal static int FirefoxCheck(string path) {
             var report=new List<string>();
             try {
-                Native.NfStart();Native.NfConfigure(0,.70f,0,120);Native.NfTiming(30,75,30);Native.NfFlashProtection(1);Native.NfEnable(1);
+                Native.NfStart();Native.NfConfigure(0,.70f,0,120);Native.NfTiming(30,75,30);Native.NfEnable(1);
                 using(var bridge=new PlayerBridge()) {
                     DateTime end=DateTime.UtcNow.AddSeconds(55);string latest="";
                     while(DateTime.UtcNow<end) {
@@ -69,7 +26,7 @@ namespace NocnyFiltr {
                             Require(page!=null,"Test browser missing");
                             int pageAlpha=int.Parse(page.Substring(0,page.IndexOf('%')));
                             Require(pageAlpha<10,"Dark page still affected by bright video: "+page);
-                            report.Add("PASS: Firefox extension -> native messaging -> user-only pipe -> native regions with synchronized frame protection enabled.");
+                            report.Add("PASS: Firefox extension -> native messaging -> user-only pipe -> native regions.");
                             report.Add("PASS: video dimming="+alpha+"%, dark page="+pageAlpha+"%.");
                             File.WriteAllLines(path,report);return 0;
                         }
@@ -136,13 +93,13 @@ namespace NocnyFiltr {
             } catch(Exception e) {report.Add("FAIL: "+e);File.WriteAllLines(path,report);return 1;}
             finally {Native.NfEnable(0);Native.NfStop();}
         }
-        internal static int Motion(string path,bool protection=false) {
+        internal static int Motion(string path) {
             List<string> report=new List<string>();
             try {
-                using(Form patch=new Form { Text="Softlight motion test", Bounds=new Rectangle(80,100,1000,600), FormBorderStyle=FormBorderStyle.None, BackColor=Color.FromArgb(100,100,100), TopMost=true }) {
+                using(Form patch=new Form { Bounds=new Rectangle(80,100,480,240), FormBorderStyle=FormBorderStyle.None, BackColor=Color.FromArgb(100,100,100), TopMost=true }) {
                     int position=0;
                     patch.Paint+=delegate(object sender,PaintEventArgs e) { using(SolidBrush b=new SolidBrush(Color.FromArgb(180,180,180))) e.Graphics.FillRectangle(b,position,0,50,240); };
-                    patch.Show(); WaitUi(250); Native.NfStart(); Native.NfConfigure(.45f,.65f,1,120); Native.NfFlashProtection(protection?1:0); Native.NfEnable(1); WaitUi(600);
+                    patch.Show(); WaitUi(250); Native.NfStart(); Native.NfConfigure(.45f,.65f,1,120); Native.NfEnable(1); WaitUi(600);
                     for(int run=0;run<3;run++) {
                         EngineStatus before,after; Native.NfGetStatus(out before);
                         System.Diagnostics.Stopwatch clock=System.Diagnostics.Stopwatch.StartNew();
@@ -215,15 +172,6 @@ namespace NocnyFiltr {
                     Require(Math.Abs(output[i*4+3]-(i<256?0:102))<=1,"Window gain differs with pixel brightness or ignores foreground occlusion");
                 }
                 report.Add("PASS: whole-window shader: all colours and shadows share the same alpha; foreground region blocks the lower mask.");
-                Require(Native.NfTestShader(0,.4f,10,1,1024,1,input,output)==0,"Protected frame shader call");
-                for(int i=0;i<1024;i++) {
-                    Require(output[i*4+3]==(i<256?0:255),"Protected regions must be opaque; foreground exclusions transparent");
-                    for(int c=0;c<3;c++)Require(Math.Abs(output[i*4+c]-(i<256?0:input[i*4+c]*.6))<=1,"Protected frame colour scaling");
-                }
-                float[] linear={4,2,1,1,.5f,.25f,.1f,1};float[] rendered=new float[8];
-                Require(Native.NfTestHdrShader(0,.4f,10,1,2,linear,rendered)==0,"Protected HDR frame shader call");
-                for(int i=0;i<8;i++)Require(Math.Abs(rendered[i]-(i%4==3?1:linear[i]*.6))<.00001,"HDR protected frame preserves linear colour relationships");
-                report.Add("PASS: synchronized frame colours, opaque output, foreground exclusions and HDR scaling.");
                 float[] hdrInput=new float[4096],hdrOutput=new float[4096];
                 for(int i=0;i<1024;i++) {
                     double v=i<256 ? Tone.Decode(i/255.0) : Math.Pow(2,rng.NextDouble()*10-4);
@@ -248,11 +196,11 @@ namespace NocnyFiltr {
                 Settings malformed = Settings.Read(configPath);
                 Require(malformed.Threshold==95 && malformed.Strength==0 && malformed.Curve==1 && malformed.Fps==30 && malformed.Enabled,"Settings bounds");
                 Settings defaults = new Settings();
-                Require(defaults.FlashProtection && defaults.Strength==70 && defaults.Speed==75 && defaults.SuddenSpeed==30,"Requested defaults");
-                Settings original = new Settings { FlashProtection=false, Threshold = 33, Strength = 71, Curve = 0, Fps = 30, Enabled = true, Speed = 80, SuddenSpeed = 20, Frequency = 12, AlwaysOnTop = true, Language = "pl" };
+                Require(defaults.Strength==70 && defaults.Speed==75 && defaults.SuddenSpeed==30,"Requested defaults");
+                Settings original = new Settings { Threshold = 33, Strength = 71, Curve = 0, Fps = 30, Enabled = true, Speed = 80, SuddenSpeed = 20, Frequency = 12, AlwaysOnTop = true, Language = "pl" };
                 original.Write(configPath); Settings loaded = Settings.Read(configPath);
                 Require(loaded.Threshold==33 && loaded.Strength==71 && loaded.Curve==0 && loaded.Fps==30 && loaded.Enabled,"Settings round trip");
-                Require(!loaded.FlashProtection && loaded.Speed==80 && loaded.SuddenSpeed==20 && loaded.Frequency==12 && loaded.AlwaysOnTop && loaded.Language=="pl","All preferences round trip");
+                Require(loaded.Speed==80 && loaded.SuddenSpeed==20 && loaded.Frequency==12 && loaded.AlwaysOnTop && loaded.Language=="pl","All preferences round trip");
                 File.Delete(configPath);
                 report.Add("PASS: defaults 70%, 2x, 30%; settings validation, atomic replacement and all preferences persistence.");
                 report.Add("RESULT: PASS");
@@ -265,11 +213,13 @@ namespace NocnyFiltr {
         }
         internal static int InterfaceCheck(string path) {
             List<string> report=new List<string>();
+            Point moved=Point.Empty;
             try {
                 Settings.Folder=Path.GetDirectoryName(Path.GetFullPath(path));Settings.FilePath=Path.Combine(Settings.Folder,"language-ui-test.ini");
                 new Settings().Save();
                 using(MainForm ui=new MainForm(false)) {
                     ui.Show();WaitUi(200);
+                    Require(ui.PanelTransitionsDisabled,"Panel transitions were not disabled");
                     Button closePanel=(Button)ui.Controls.Find("ClosePanel",true)[0];
                     Require(closePanel.AccessibleName=="Close panel","Accessible close button missing");
                     Require(ui.Controls.Find("AlwaysOnTop",true)[0] is ThemeCheckBox && ui.Controls.Find("StartWithWindows",true)[0] is ThemeCheckBox,"High contrast checkboxes missing");
@@ -284,9 +234,13 @@ namespace NocnyFiltr {
                     ((Slider)ui.Controls.Find("ChangeSpeed",true)[0]).Value=80;((Slider)ui.Controls.Find("SuddenSpeed",true)[0]).Value=20;WaitUi(650);Require(Settings.Read(Settings.FilePath).Speed==80 && Settings.Read(Settings.FilePath).SuddenSpeed==20,"Speed sliders persistence");
                     CheckBox pin=(CheckBox)ui.Controls.Find("AlwaysOnTop",true)[0];
                     pin.Checked=true;WaitUi(650);Require(ui.TopMost&&Settings.Read(Settings.FilePath).AlwaysOnTop,"Pinned setting not applied/saved");
-                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible,"Pinned panel hidden by shortcut");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(!ui.Visible && ui.TopMost,"Pinned shortcut must hide without unpinning");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Visible && ui.TopMost,"Pinned shortcut must reopen");
                     ((Button)ui.Controls.Find("ToggleFilter",true)[0]).PerformClick();WaitUi(1800);
                     Native.NfGetStatus(out status);Require(status.State==2,"Active filter was not ready for the panel close test");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
+                    Native.NfGetStatus(out status);Require(!ui.Visible && status.State==2,"Pinned shortcut stopped filtering or failed to hide");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
                     closePanel.PerformClick();WaitUi(150);
                     Require(!ui.Visible && ui.TopMost && Settings.Read(Settings.FilePath).AlwaysOnTop,"Close button must hide a pinned panel without clearing its setting");
                     Native.NfGetStatus(out status);Require(status.State==2,"Panel close stopped the active filter");
@@ -296,10 +250,29 @@ namespace NocnyFiltr {
                     pin.Checked=false;WaitUi(650);Require(!ui.TopMost&&!Settings.Read(Settings.FilePath).AlwaysOnTop,"Unpin not applied/saved");
                     ui.SetLanguage("pl");WaitUi(650);Require(ContainsText(ui,"Siła automatycznego przyciemniania"),"Polish translation");Require(Settings.Read(Settings.FilePath).Language=="pl","Polish persistence");
                     ui.SetLanguage("en");WaitUi(650);Require(ContainsText(ui,"Strength"),"English translation");Require(Settings.Read(Settings.FilePath).Language=="en","English persistence");
+                    moved=new Point(Screen.PrimaryScreen.WorkingArea.Left+40,Screen.PrimaryScreen.WorkingArea.Top+40);
+                    ui.Location=moved;Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
+                    Require(Settings.Read(Settings.FilePath).PanelX==moved.X && Settings.Read(Settings.FilePath).PanelY==moved.Y,"Moved panel location not saved");
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);
+                    Native.PostMessage(ui.Handle,0x0312,new IntPtr(1),IntPtr.Zero);WaitUi(150);Require(ui.Location==moved,"Reopening moved panel reset position");
+                    ui.ToggleGraph();ui.ToggleGraph();Require(ui.Location==moved,"Graph toggle reset panel position");
+                    Rectangle area=Screen.PrimaryScreen.WorkingArea;
+                    ui.Location=new Point(area.Right-ui.Width-15,area.Bottom-ui.Height-15);
+                    Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
+                    Rectangle collapsed=ui.Bounds;var layoutFrames=new List<Rectangle>();
+                    EventHandler recordBounds=delegate {layoutFrames.Add(ui.Bounds);};
+                    ui.LocationChanged+=recordBounds;ui.SizeChanged+=recordBounds;
+                    ui.ToggleGraph();Rectangle expanded=ui.Bounds;
+                    ui.LocationChanged-=recordBounds;ui.SizeChanged-=recordBounds;
+                    Require(ui.Visible && expanded.Height>collapsed.Height && area.Contains(expanded),"Expanded graph is hidden or outside the screen");
+                    foreach(Rectangle frame in layoutFrames)Require(frame==expanded,"Graph expansion exposed an intermediate window position/size");
+                    ui.ToggleGraph();Require(ui.Visible && ui.Bounds==collapsed,"Graph collapse did not restore window bounds");
+                    ui.Location=moved;Native.PostMessage(ui.Handle,0x0232,IntPtr.Zero,IntPtr.Zero);WaitUi(150);
                     Native.PostMessage(ui.Handle,Program.ExitMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(100);
                 }
                 using(MainForm reopened=new MainForm(false)) {
                     reopened.Show();WaitUi(200);
+                    Require(reopened.Location==moved,"Restart lost panel location");
                     Require(((Slider)reopened.Controls.Find("ChangeSpeed",true)[0]).Value==80 && ((Slider)reopened.Controls.Find("SuddenSpeed",true)[0]).Value==20,"Reopened panel lost custom slider values");
                     Require(Settings.Read(Settings.FilePath).Strength==70,"Reopened panel changed strength");
                     Native.PostMessage(reopened.Handle,Program.ExitMessage,IntPtr.Zero,IntPtr.Zero);WaitUi(100);

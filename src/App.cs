@@ -24,7 +24,7 @@ namespace NocnyFiltr {
         bool graphExpanded;
         System.Windows.Forms.Timer graphTimer;
         Label strengthValue, statusLabel, hotkeyLabel;
-        DarkButton toggle; Slider speedSlider,suddenSlider; Label speedValue,suddenValue; ToolStripMenuItem frequencyMenu, eco, flashProtection;
+        DarkButton toggle; Slider speedSlider,suddenSlider; Label speedValue,suddenValue; ToolStripMenuItem frequencyMenu, eco;
 
         System.Windows.Forms.Timer poll, saveTimer;
         ToolStripMenuItem trayToggle;
@@ -33,12 +33,15 @@ namespace NocnyFiltr {
         string T(string text) { return Language.Text(text,settings.Language); }
         bool hotkeyRegistered;
         PanelCloseButton closePanel;
+        bool draggingPanel;
+        internal bool PanelTransitionsDisabled {get;private set;}
         float layoutScale = 1;
         internal MainForm(bool previewOnly) {
             SuspendLayout();
             this.previewOnly = previewOnly;
             settings = previewOnly ? new Settings() : Settings.Load();
             Text = Program.Title; BackColor = Theme.Background; ForeColor = Theme.Text;
+            DoubleBuffered = true;
             Font = Theme.Font(10, FontStyle.Regular);
             AutoScaleMode = AutoScaleMode.None;
             ClientSize = new Size(360, 438); FormBorderStyle = FormBorderStyle.None;
@@ -109,7 +112,9 @@ namespace NocnyFiltr {
         }
         void BuildUi() {
             Panel header=new Panel { Location=Point.Empty,Size=new Size(360,32),BackColor=Theme.Card };Controls.Add(header);
-            LabelAt(header,"Softlight",14,5,300,24,10,Theme.Text,false);
+            Label title=LabelAt(header,"Softlight",14,5,300,24,10,Theme.Text,false);
+            header.Name="PanelHeader";title.Name="PanelTitle";
+            header.MouseDown+=DragPanel;title.MouseDown+=DragPanel;
             closePanel=new PanelCloseButton {Name="ClosePanel",Location=new Point(328,0),Size=new Size(32,32)};
             closePanel.Click+=delegate {HidePanel();};header.Controls.Add(closePanel);
             toggle=ButtonAt(this,"",12,40,336,50,delegate {settings.Enabled=!settings.Enabled;Apply(true);});toggle.Name="ToggleFilter";
@@ -152,8 +157,6 @@ namespace NocnyFiltr {
             languageItem.DropDown.Renderer = new TrayRenderer();
             languageItem.DropDown.BackColor = Theme.Card;
             exitItem = new ToolStripMenuItem("",null,delegate { Exit(); });
-            flashProtection=new ToolStripMenuItem {Text=T("Ochrona przed błyskami"),CheckOnClick=true,Checked=settings.FlashProtection};
-            flashProtection.Click+=delegate {settings.FlashProtection=flashProtection.Checked;Apply(true);};
             eco=new ToolStripMenuItem {Text=T("Oszczędzaj energię (30 kl./s)"),CheckOnClick=true,Checked=settings.Fps==30};
             eco.Click+=delegate {settings.Fps=eco.Checked?30:120;if(eco.Checked && settings.Frequency>30)settings.Frequency=30;Apply(true);};
             frequencyMenu=new ToolStripMenuItem();
@@ -162,7 +165,7 @@ namespace NocnyFiltr {
                 ToolStripMenuItem item=new ToolStripMenuItem(hz+" Hz",null,delegate {SetFrequency(chosen);});item.Tag=hz;frequencyMenu.DropDownItems.Add(item);
             }
             frequencyMenu.DropDown.Renderer=new TrayRenderer();frequencyMenu.DropDown.BackColor=Theme.Card;
-            trayMenu.Items.AddRange(new ToolStripItem[]{panelItem,trayToggle,new ToolStripSeparator(),frequencyMenu,eco,flashProtection,languageItem,new ToolStripSeparator(),exitItem});
+            trayMenu.Items.AddRange(new ToolStripItem[]{panelItem,trayToggle,new ToolStripSeparator(),frequencyMenu,eco,languageItem,new ToolStripSeparator(),exitItem});
             SpaceMenu(trayMenu);
             tray = new NotifyIcon { Icon = moonIcon, Text = "Softlight", Visible = true, ContextMenuStrip = trayMenu };
             tray.MouseClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) TogglePanel(); };
@@ -199,7 +202,6 @@ namespace NocnyFiltr {
             hotkeyLabel.Text=T(hotkeyLabel.Tag is bool && !hotkeyRegistered ? "Skrót jest zajęty — użyj ikony obok zegara." : "Alt + F11: pokaż / ukryj panel");
             if(trayMenu!=null) {
                 frequencyMenu.Text=T("Częstotliwość")+" · "+settings.Frequency+" Hz";foreach(ToolStripMenuItem item in frequencyMenu.DropDownItems)item.Checked=(int)item.Tag==settings.Frequency;
-                flashProtection.Text=T("Ochrona przed błyskami");
                 eco.Text=T("Oszczędzaj energię (30 kl./s)");
                 panelItem.Text=T("Pokaż / ukryj panel");languageItem.Text=T("Język");exitItem.Text=T("Zakończ");
                 englishItem.Checked=settings.Language=="en";polishItem.Checked=settings.Language=="pl";
@@ -209,16 +211,14 @@ namespace NocnyFiltr {
         }
         void Apply(bool save) {
             if (!ready) return;
-            hotkeyLabel.Text=settings.AlwaysOnTop?T("Panel przypięty — odznacz, aby ukrywać."):T(hotkeyLabel.Tag is bool && !hotkeyRegistered ? "Skrót jest zajęty — użyj ikony obok zegara.":"Alt + F11: pokaż / ukryj panel");
+            hotkeyLabel.Text=T(hotkeyLabel.Tag is bool && !hotkeyRegistered ? "Skrót jest zajęty — użyj ikony obok zegara.":"Alt + F11: pokaż / ukryj panel");
             speedValue.Text=Math.Pow(4,(settings.Speed-50)/50.0).ToString("0.##")+"×"; suddenValue.Text=settings.SuddenSpeed+"%";
-            if(flashProtection!=null)flashProtection.Checked=settings.FlashProtection;
             if(eco!=null) eco.Checked=settings.Fps==30;
             if(frequencyMenu!=null) {frequencyMenu.Text=T("Częstotliwość")+" · "+settings.Frequency+" Hz";foreach(ToolStripMenuItem item in frequencyMenu.DropDownItems) item.Checked=(int)item.Tag==settings.Frequency;}
             strengthValue.Text=settings.Strength+"%"; strength.AccessibleDescription=strengthValue.Text;
             toggle.Selected=false;toggle.Text=settings.Enabled?T("Uruchamianie…"):T("○  Włącz filtr");toggle.Invalidate();
             if (!previewOnly) {
                 Native.NfConfigure(settings.Threshold / 100f, settings.Strength / 100f, 0, settings.Fps);
-                Native.NfFlashProtection(settings.FlashProtection?1:0);
                 Native.NfTiming(settings.Frequency,settings.Speed,settings.SuddenSpeed);
                 Native.NfEnable(settings.Enabled && !suspended && settings.Strength > 0 ? 1 : 0);
                 trayToggle.Text = settings.Enabled ? T("Wyłącz filtr") : T("Włącz filtr");
@@ -251,18 +251,49 @@ namespace NocnyFiltr {
         void UpdatePreviewRect() { if(!previewOnly && ready) Native.NfPreviewRect(0,0,0,0); }
         internal void Pause() { settings.Enabled = false; Apply(true); }
         void AnchorPanel() {
-            Rectangle area = Screen.PrimaryScreen.WorkingArea;
+            bool positioned=settings.PanelX.HasValue && settings.PanelY.HasValue;
+            Point position=positioned?new Point(settings.PanelX.Value,settings.PanelY.Value):Point.Empty;
+            Rectangle area = (positioned?Screen.FromPoint(position):Screen.PrimaryScreen).WorkingArea;
             int margin = Math.Max(4, (int)Math.Round(6 * layoutScale));
             int desiredWidth = (int)Math.Round(360 * layoutScale);
-            int desiredHeight = (int)Math.Round((468+(graphExpanded?180:0)) * layoutScale) + 30;
+            int desiredHeight = (int)Math.Round((438+(graphExpanded?180:0)) * layoutScale) + 30;
             AutoScroll = desiredHeight > area.Height - margin*2 || desiredWidth > area.Width - margin*2;
-            Size = new Size(Math.Min(desiredWidth, area.Width-margin*2), Math.Min(desiredHeight, area.Height-margin*2));
-            Location = new Point(area.Right - Width - margin, area.Bottom - Height - margin);
+            Size nextSize = new Size(Math.Min(desiredWidth, area.Width-margin*2), Math.Min(desiredHeight, area.Height-margin*2));
+            Point nextLocation = positioned
+                ? new Point(Math.Max(area.Left,Math.Min(position.X,area.Right-nextSize.Width)),Math.Max(area.Top,Math.Min(position.Y,area.Bottom-nextSize.Height)))
+                : new Point(area.Right - nextSize.Width - margin, area.Bottom - nextSize.Height - margin);
+            SetBounds(nextLocation.X,nextLocation.Y,nextSize.Width,nextSize.Height);
             UpdatePreviewRect();
         }
         void ShowPanel() { WindowState = FormWindowState.Normal; AnchorPanel(); Show(); AnchorPanel(); Activate(); }
         void HidePanel() { Hide(); if(!previewOnly)Save(); }
-        void TogglePanel() { if(Visible && !settings.AlwaysOnTop) Hide(); else ShowPanel(); }
+        void TogglePanel() { if(Visible) HidePanel(); else ShowPanel(); }
+        [DllImport("user32.dll")] static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam);
+        [DllImport("user32.dll")] static extern bool RedrawWindow(IntPtr hwnd,IntPtr updateRect,IntPtr updateRegion,uint flags);
+        void DragPanel(object sender,MouseEventArgs e) {
+            if(e.Button!=MouseButtons.Left)return;
+            draggingPanel=true;
+            try {
+                Point cursor=Cursor.Position;
+                IntPtr position=new IntPtr(unchecked((cursor.Y<<16)|(cursor.X&0xffff)));
+                ReleaseCapture();SendMessage(Handle,0x00A1,new IntPtr(2),position);
+            }
+            finally {draggingPanel=false;}
+        }
+        protected override void OnHandleCreated(EventArgs e) {
+            base.OnHandleCreated(e);
+            // DWMWA_TRANSITIONS_FORCEDISABLED: apply before the first Show,
+            // including after handle recreation, without changing system settings.
+            int disabled=1;
+            PanelTransitionsDisabled=Native.DwmSetWindowAttribute(Handle,3,ref disabled,4)==0;
+        }
+        protected override void OnResizeEnd(EventArgs e) {
+            base.OnResizeEnd(e);
+            if(!ready)return;
+            settings.PanelX=Left;settings.PanelY=Top;
+            AnchorPanel();if(!previewOnly)Save();
+        }
         void Exit() { exiting = true; Native.NfEnable(0); Close(); }
         void OnSessionSwitch(object sender, SessionSwitchEventArgs e) {
             if (IsDisposed || !IsHandleCreated) return;
@@ -282,6 +313,10 @@ namespace NocnyFiltr {
         }
         protected override void WndProc(ref Message m) {
             if (m.Msg == 0x02E0 && ready) {
+                if((draggingPanel || settings.PanelX.HasValue) && m.LParam!=IntPtr.Zero) {
+                    NativeRect suggested=(NativeRect)Marshal.PtrToStructure(m.LParam,typeof(NativeRect));
+                    settings.PanelX=suggested.Left;settings.PanelY=suggested.Top;
+                }
                 float next = (m.WParam.ToInt64() & 0xFFFF) / 96f;
                 Scale(new SizeF(next / layoutScale, next / layoutScale)); layoutScale = next;
                 AnchorPanel(); return;

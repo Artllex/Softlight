@@ -8,8 +8,6 @@ namespace NocnyFiltr {
         public ulong Frames, Heartbeat;
     }
     internal static class Native {
-        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern void NfFlashProtection(int enabled);
-        [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl)] internal static extern void NfTestHoldCapture(int enabled);
         [DllImport("NocnyFiltr.Engine.dll",CallingConvention=CallingConvention.Cdecl,CharSet=CharSet.Unicode)] internal static extern void NfGraphRead(ulong after,System.Text.StringBuilder text,int capacity);
         [DllImport("NocnyFiltr.Engine.dll", CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern void NfWindowReport(System.Text.StringBuilder text,int capacity);
         [DllImport("NocnyFiltr.Engine.dll", CallingConvention=CallingConvention.Cdecl)] internal static extern int NfTestResponse();

@@ -15,9 +15,15 @@ Get the installer or portable ZIP from [Releases](https://github.com/Artllex/Sof
 
 Windows 10 version 2004 or newer, or Windows 11, x64. Uses .NET Framework 4.8 and Direct3D 11. The application is not code-signed; Windows may display a reputation warning.
 
-## Firefox integration (2.1.0)
+## Firefox integration
 
 The installer and portable package include the Firefox extension and native host. Follow [Firefox setup](FIREFOX.md) to load the unsigned extension temporarily. It must be loaded again after restarting Firefox.
+
+## Version 2.2.0
+
+This release completes the panel interface: draggable and remembered position, high-contrast checkboxes, an always-available close button, and Alt + F11 toggling even when pinned. Active and Live graph share a row; the graph opens above them. Panel transitions are disabled and layout changes are applied together.
+
+Image processing uses the selected `d0a421f` baseline. Brief bright flashes and delayed or duplicate graph markers during context changes remain known limitations; this release does not claim to fix them.
 
 ## Features
 
@@ -29,7 +35,6 @@ The installer and portable package include the Firefox extension and native host
 - Retains the last dimming level of hidden or covered windows while the engine runs.
 - Ignores small target fluctuations within two percentage points.
 - Accelerates dimming after large brightness increases.
-- Flash protection presents already-dimmed frames to reduce bright-frame leaks, with a tray switch to return to lower-latency masks.
 - Tray menu with 120, 60, 30, 12 and 4 Hz analysis options, and a 30 fps power-saving option.
 - English and Polish interface, optional startup with Windows and always-on-top panel.
 
@@ -39,15 +44,15 @@ The installer and portable package include the Firefox extension and native host
 
 Click **Enable filter** to start. **Alt + F11** or a left click on the tray icon shows or hides the panel. Right-click the tray icon for frequency, power-saving, language and exit options.
 
-**Always on top** keeps the panel visible and prevents hiding it with the shortcut or tray icon until unpinned. The **×** button always hides the panel, including when pinned; filtering continues and the pin setting is retained. Use Alt + F11 or the tray icon to reopen it. **Start with Windows** launches it in the tray, unless pinned.
+**Always on top** keeps the panel above other windows. **Alt + F11**, the tray icon and **×** can hide it even when pinned; filtering continues and the pin setting is retained. Drag the header to move the panel. Its position is remembered when reopening and restarting, and kept within an available screen. **Start with Windows** launches it in the tray, unless pinned.
 
 Settings live in `%LOCALAPPDATA%\NocnyFiltrWindows\settings.ini`, retaining compatibility with development builds. Exiting saves settings and removes the overlays. Uninstalling preserves settings.
 
 ## How it works and limitations
 
-Softlight samples the desktop through DXGI Desktop Duplication, identifies visible application windows and draws click-through surfaces using DirectComposition. With **Flash protection** enabled (the default), those surfaces display already-dimmed captured frames. Turning it off restores transparent black masks over the live desktop. It does not change the monitor's hardware brightness. Its surfaces are excluded from capture to avoid recursive dimming. HDR composition uses linear scRGB.
+Softlight samples the desktop through DXGI Desktop Duplication, identifies visible application windows and draws click-through black overlays using DirectComposition. It does not change the monitor's hardware brightness. The overlay is excluded from capture to avoid recursive dimming. HDR composition uses linear scRGB.
 
-With the [Firefox companion extension](FIREFOX.md), the largest visible player is dimmed independently from the rest of the browser window. Without it, browsers are treated as whole windows. Only visible areas contribute to brightness analysis. Flash protection adds image latency and ties visible motion to the processing frame rate; Save power limits it to 30 fps. It protects already covered regions, but initial coverage, moving/new windows and capture resets can still expose live frames. Protected video may appear black; disable Flash protection in that case. Exclusive fullscreen games and multiple physical displays have not been comprehensively validated. Transparent and irregular windows are approximated by rectangles.
+With the [Firefox companion extension](FIREFOX.md), the largest visible player is dimmed independently from the rest of the browser window. Without it, browsers are treated as whole windows. Only visible areas contribute to brightness analysis. The first bright frame can appear before capture and dimming; flash prevention is not guaranteed. Moving windows can briefly expose a delayed mask. Protected video, exclusive fullscreen games and multiple physical displays have not been comprehensively validated. Transparent and irregular windows are approximated by rectangles.
 
 The selected analysis frequency is a target, not a guaranteed refresh rate. Emergency brightness detection checks fresh captured frames even at lower selected rates. All processing stays on the device; the app does not upload screen content or window titles.
 
